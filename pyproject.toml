@@ -1,0 +1,13 @@
+# pyproject.toml
+[project]
+name = "advanced-textoverlay"  # Unique and immutable node identifier.
+description = "Advanced Text Overlay Node for ComfyUI featuring rebuilt rendering logic, precise alignment, custom fonts, and extended styling controls."
+version = "1.0.0"  # Semantic versioning
+dependencies = []  # Populated from requirements.txt if present.
+
+[project.urls]
+Repository = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay"
+
+[tool.comfy]
+PublisherId = "scofano"
+DisplayName = "Advanced Text Overlay"
