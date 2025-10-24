@@ -42,11 +42,11 @@ class TextOverlay:
                 "fill_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
                 # padding, hor_align, x_shift, vert align, y_shift, line_spacing
-                "padding": ("INT", {"default": 16, "min": 0, "max": 256, "step": 1}),
+                "padding": ("INT", {"default": 16, "min": 0, "max": 1024, "step": 1}),
                 "vertical_alignment": (cls._vertical_alignments, {"default": "middle"}),
-                "y_shift": ("INT", {"default": 0, "min": -256, "max": 256, "step": 1}),
+                "y_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
                 "horizontal_alignment": (cls._horizontal_alignments, {"default": "center"}),
-                "x_shift": ("INT", {"default": 0, "min": -256, "max": 256, "step": 1}),
+                "x_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
                 "line_spacing": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 50.0, "step": 0.5}),
 
                 # all strokes
@@ -57,7 +57,7 @@ class TextOverlay:
 
                 # all boxes
                 "bg_enable": ("BOOLEAN", {"default": False}),
-                "bg_padding": ("INT", {"default": 8, "min": 0, "max": 256, "step": 1}),
+                "bg_padding": ("INT", {"default": 8, "min": 0, "max": 1024, "step": 1}),
                 "bg_radius": ("INT", {"default": 8, "min": 0, "max": 512, "step": 1}),
                 "bg_color_hex": ("STRING", {"default": "#000000"}),
                 "bg_alpha": ("FLOAT", {"default": 0.50, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
