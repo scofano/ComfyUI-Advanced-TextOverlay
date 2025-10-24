@@ -8,6 +8,9 @@
 
 This node extends and refines the classic ComfyUI Text Overlay concept with a **re-engineered rendering engine**, **precise alignment logic**, **new customization parameters**, and **enhanced batch handling** — making it the most advanced text overlay solution available for ComfyUI.
 
+
+---
+![Advanced Text Overlay Screenshot](https://github.com/scofano/ComfyUI-Advanced-TextOverlay/animated.gif)
 ---
 
 ## ✨ Key Improvements & New Features
