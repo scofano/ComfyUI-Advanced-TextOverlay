@@ -11,7 +11,6 @@ This node extends and refines the classic ComfyUI Text Overlay concept with a **
 
 ---
 ![Advanced Text Overlay Screenshot](https://github.com/scofano/ComfyUI-Advanced-TextOverlay/blob/main/animated.gif)
----
 
 ## ✨ Key Improvements & New Features
 
