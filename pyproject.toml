@@ -9,5 +9,5 @@ dependencies = []  # Populated from requirements.txt if present.
 Repository = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay"
 
 [tool.comfy]
-PublisherId = "scofano"
+PublisherId = "dansco"
 DisplayName = "Advanced Text Overlay"
