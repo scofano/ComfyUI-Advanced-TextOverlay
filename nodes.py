@@ -35,21 +35,21 @@ class TextOverlay:
                 "text": ("STRING", {"multiline": True, "default": "the quick brown fox\njumps over the lazy dog"}),
                 "all_caps": ("BOOLEAN", {"default": False}),
 
-                # font, font-size, font color, font alpha
+                # font, font-size, font color, font alpha, padding, line_spacing
                 "font": ("STRING", {"default": "ariblk.ttf"}),
                 "font_size": ("INT", {"default": 32, "min": 1, "max": 9999, "step": 1}),
                 "letter_spacing": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 50.0, "step": 0.5}),
                 "font_alignment": (cls._horizontal_alignments, {"default": "center"}),
+                "line_spacing": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 50.0, "step": 0.5}),
+                "padding": ("INT", {"default": 16, "min": 0, "max": 1024, "step": 1}),
                 "fill_color_hex": ("STRING", {"default": "#FFFFFF"}),
                 "fill_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
-                # padding, hor_align, x_shift, vert align, y_shift, line_spacing
-                "padding": ("INT", {"default": 16, "min": 0, "max": 1024, "step": 1}),
+                # hor_align, x_shift, vert align, y_shift
                 "vertical_alignment": (cls._vertical_alignments, {"default": "middle"}),
                 "y_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
                 "horizontal_alignment": (cls._horizontal_alignments, {"default": "center"}),
                 "x_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
-                "line_spacing": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 50.0, "step": 0.5}),
 
                 # all strokes
                 "stroke_enable": ("BOOLEAN", {"default": True}),
