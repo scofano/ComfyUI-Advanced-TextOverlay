@@ -22,7 +22,7 @@ This node extends and refines the classic ComfyUI Text Overlay concept with a **
 
 ### 🎨 2. Extended Styling and Layout Control
 
-* **Line spacing** and **padding** parameters for advanced multi-line composition.
+* **Line spacing**, **letter spacing** and **padding** parameters for advanced multi-line composition.
 * **Independent X/Y shifting** for fine-tuned manual positioning.
 * **Full hex color control** for both text fill and stroke.
 * Supports transparent overlays for non-destructive compositing.
@@ -106,6 +106,7 @@ To install the **Advanced Text Overlay** node:
 | **x_shift**              | Float         | Horizontal offset adjustment (pixels).                                        |
 | **y_shift**              | Float         | Vertical offset adjustment (pixels).                                          |
 | **line_spacing**         | Float         | Vertical spacing between lines of text.                                       |
+| **letter_spacing**       | Float         | Horizontal spacing between letters.                                           |
 
 ---
 
