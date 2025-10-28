@@ -39,6 +39,7 @@ class TextOverlay:
                 "font": ("STRING", {"default": "ariblk.ttf"}),
                 "font_size": ("INT", {"default": 32, "min": 1, "max": 9999, "step": 1}),
                 "letter_spacing": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 50.0, "step": 0.5}),
+                "font_alignment": (cls._horizontal_alignments, {"default": "center"}),
                 "fill_color_hex": ("STRING", {"default": "#FFFFFF"}),
                 "fill_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
@@ -65,7 +66,7 @@ class TextOverlay:
 
                 # all shadows
                 "shadow_enable": ("BOOLEAN", {"default": False}),
-                "shadow_distance": ("INT", {"default": 4, "min": -50, "max": 50, "step": 1}),
+                "shadow_distance": ("INT", {"default": 3, "min": -50, "max": 50, "step": 1}),
                 "shadow_color_hex": ("STRING", {"default": "#000000"}),
                 "shadow_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
             }
@@ -139,7 +140,7 @@ class TextOverlay:
     # ---------------- core drawing ----------------
 
     def _compute_layout(self, img_w, img_h, draw, text, font, stroke_width, padding,
-                    h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, use_cache):
+                    h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, font_size, use_cache):
         """
         Manual multiline layout so stroke/fill line positions are identical.
 
@@ -148,12 +149,29 @@ class TextOverlay:
         Returns:
           (lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y)
         """
+        
+        # derive a stable identifier for the font face (works across new FreeTypeFont instances)
+        try:
+            current_font_id = (font.getname(), getattr(font, "path", None))
+        except Exception:
+            current_font_id = (None, None)
+                
         need_recompute = True
+        
         if self._cached is not None and use_cache:
-            # the last element of the cache is the letter_spacing it was computed with
-            cached_letter_spacing = self._cached[-1]
-            if cached_letter_spacing == letter_spacing:
+            (*_, cached_letter_spacing, cached_stroke_width,
+             cached_text, cached_font_id, cached_font_size, cached_padding, cached_line_spacing) = self._cached
+            if (
+                cached_letter_spacing == letter_spacing and
+                cached_stroke_width   == stroke_width   and
+                cached_text           == text           and
+                cached_font_id        == current_font_id and
+                cached_font_size      == font_size      and
+                cached_padding        == padding        and
+                cached_line_spacing   == line_spacing
+            ):
                 need_recompute = False
+
 
         if need_recompute:
             # wrap with spacing-aware width checks
@@ -162,11 +180,9 @@ class TextOverlay:
             widths, heights, tops = [], [], []
             lefts, rights_sp = [], []
             for ln in lines:
-                # bbox includes stroke when stroke_width > 0
                 l, t, r, b = draw.textbbox((0, 0), ln, font=font, stroke_width=stroke_width)
                 w = (r - l)
                 h = (b - t)
-                # add extra visual width from inter-char spacing
                 extra = max(0, len(ln) - 1) * letter_spacing
                 widths.append(w + extra)
                 heights.append(h)
@@ -178,12 +194,21 @@ class TextOverlay:
             max_right = max(rights_sp) if rights_sp else 0
             block_w = max_right - min_left if rights_sp else 0
             block_h = sum(heights) + (len(heights) - 1) * line_spacing if heights else 0
-            min_top = min(tops) if tops else 0  # may be negative for ascenders
+            min_top = min(tops) if tops else 0
 
-            # cache results to reuse on subsequent frames (append letter_spacing)
-            self._cached = (lines, widths, heights, tops, min_top, min_left, block_w, block_h, letter_spacing)
+            # cache results to reuse on subsequent frames (append both letter_spacing and stroke_width)
+            self._cached = (
+                lines, widths, heights, tops, min_top, min_left,
+                block_w, block_h,
+                letter_spacing, stroke_width,
+                text, current_font_id, font_size, padding, line_spacing
+            )
 
-        lines, widths, heights, tops, min_top, min_left, block_w, block_h, _ = self._cached
+
+        # unpack cached values
+        (lines, widths, heights, tops, min_top, min_left,
+         block_w, block_h, cached_letter_spacing, cached_stroke_width, *_) = self._cached
+
 
         # Horizontal anchor for the *visual* block (uses min_left/max_right w/ spacing)
         if h_align == "left":
@@ -206,7 +231,6 @@ class TextOverlay:
         visual_top_y = int(round(visual_top_y + y_shift))
 
         return lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y
-
 
     def draw_text(
         self,
@@ -237,6 +261,7 @@ class TextOverlay:
         shadow_color_hex,
         shadow_alpha,
         shadow_distance,
+        font_alignment,
         use_cache=False,
     ):
         # Prepare
@@ -260,14 +285,24 @@ class TextOverlay:
          x0, visual_top_y) = self._compute_layout(
             image.width, image.height, draw, text, self._loaded_font, sw,
             padding, horizontal_alignment, vertical_alignment, x_shift, y_shift,
-            line_spacing, letter_spacing, use_cache
+            line_spacing, letter_spacing, font_size, use_cache
         )
+
         
         # Convert the visual top into the baseline y for the first line
         first_line_baseline_y = visual_top_y - min_top
 
         # This is the x where we actually draw glyphs so that the visual left aligns to x0
         x_draw = x0 - min_left
+
+        # Per-line offsets to align each line within the block
+        def _line_offset(i):
+            if font_alignment == "left":
+                return 0
+            elif font_alignment == "center":
+                return int(round((block_w - widths[i]) / 2))
+            else:  # "right"
+                return int(round(block_w - widths[i]))
 
         # Background box (perfectly aligned with visual extents)
         if bg_enable and block_w > 0 and block_h > 0:
@@ -292,13 +327,13 @@ class TextOverlay:
             od = ImageDraw.Draw(overlay, "RGBA")
 
             yy = first_line_baseline_y
-            for ln, h in zip(lines, heights):
-                xx = x_draw
+            for i, (ln, h) in enumerate(zip(lines, heights)):
+                xx = x_draw + _line_offset(i)     # NEW
                 for ch in ln:
-                    od.text((xx + sdx, yy + sdy), ch, font=self._loaded_font, fill=(sh_r, sh_g, sh_b, sh_a))
+                    od.text((xx + sdx, yy + sdy), ch, font=self._loaded_font,
+                            fill=(sh_r, sh_g, sh_b, sh_a))
                     xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
                 yy += int(round(h + line_spacing))
-
             image = Image.alpha_composite(image, overlay)
 
 
@@ -312,30 +347,16 @@ class TextOverlay:
         od = ImageDraw.Draw(overlay, "RGBA")
 
         yy = first_line_baseline_y
-        for ln, h in zip(lines, heights):
-            # draw one character at a time to inject letter spacing
-            xx = x_draw
+        for i, (ln, h) in enumerate(zip(lines, heights)):
+            xx = x_draw + _line_offset(i)         # NEW
             for ch in ln:
                 if sw > 0 and sa > 0:
-                    od.text(
-                        (xx, yy),
-                        ch,
-                        font=self._loaded_font,
-                        fill=(sr, sg, sb, sa),
-                        stroke_width=sw,
-                        stroke_fill=(sr, sg, sb, sa),
-                    )
+                    od.text((xx, yy), ch, font=self._loaded_font,
+                            fill=(sr, sg, sb, sa),
+                            stroke_width=sw, stroke_fill=(sr, sg, sb, sa))
                 if fa > 0:
-                    od.text(
-                        (xx, yy),
-                        ch,
-                        font=self._loaded_font,
-                        fill=(fr, fg, fb, fa),
-                    )
-
-                # advance by glyph width + custom letter spacing
+                    od.text((xx, yy), ch, font=self._loaded_font, fill=(fr, fg, fb, fa))
                 xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
-
             yy += int(round(h + line_spacing))
 
         image = Image.alpha_composite(image, overlay)
@@ -373,6 +394,7 @@ class TextOverlay:
         shadow_color_hex,
         shadow_alpha,
         shadow_distance,
+        font_alignment,
     ):
         """Handles both single and batch image processing (with layout caching across frames)."""
 
@@ -389,7 +411,7 @@ class TextOverlay:
                 padding, horizontal_alignment, vertical_alignment,
                 x_shift, y_shift, line_spacing,
                 bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,
+                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,font_alignment,
                 use_cache=False,
             )
             out = np.array(out_img).astype(np.float32) / 255.0
@@ -411,7 +433,7 @@ class TextOverlay:
                     padding, horizontal_alignment, vertical_alignment,
                     x_shift, y_shift, line_spacing,
                     bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,
+                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,font_alignment,
                     use_cache=use_cache,  # reuse wrapped lines/metrics for next frames
                 )
                 outs.append(np.array(out_img).astype(np.float32) / 255.0)

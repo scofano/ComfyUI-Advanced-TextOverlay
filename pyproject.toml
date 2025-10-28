@@ -2,7 +2,7 @@
 [project]
 name = "advanced-textoverlay"  # Unique and immutable node identifier.
 description = "Advanced Text Overlay Node for ComfyUI featuring rebuilt rendering logic, precise alignment, custom fonts, and extended styling controls."
-version = "1.1.0"  # Semantic versioning
+version = "1.2.0"  # Semantic versioning
 dependencies = []  # Populated from requirements.txt if present.
 
 [project.urls]
