@@ -38,6 +38,7 @@ class TextOverlay:
                 # font, font-size, font color, font alpha
                 "font": ("STRING", {"default": "ariblk.ttf"}),
                 "font_size": ("INT", {"default": 32, "min": 1, "max": 9999, "step": 1}),
+                "letter_spacing": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 50.0, "step": 0.5}),
                 "fill_color_hex": ("STRING", {"default": "#FFFFFF"}),
                 "fill_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
@@ -97,7 +98,7 @@ class TextOverlay:
             print(f"Error loading font: {e} — using default font")
             return ImageFont.load_default()
 
-    def _wrap_lines(self, draw, text, font, max_width, padding):
+    def _wrap_lines(self, draw, text, font, max_width, padding, letter_spacing):
         """
         Greedy wrapping that respects explicit newlines and preserves spaces
         (including multiple consecutive spaces).
@@ -108,75 +109,83 @@ class TextOverlay:
         out_lines = []
 
         for para in paragraphs:
-            # Keep empty lines exactly
             if para == "":
                 out_lines.append("")
                 continue
 
-            # Tokens are either non-space runs or whitespace runs
             tokens = re.findall(r"\S+|\s+", para)
 
             line = ""
             for tok in tokens:
                 candidate = line + tok
-                if draw.textlength(candidate, font=font) <= (max_width - 2 * padding):
+                # include tracking in the width test
+                char_count = max(0, len(candidate) - 1)
+                candidate_px = draw.textlength(candidate, font=font) + char_count * letter_spacing
+                if candidate_px <= (max_width - 2 * padding):
                     line = candidate
                 else:
                     if line == "":
-                        # Single token longer than the max width: force-break
                         out_lines.append(candidate)
                         line = ""
                     else:
                         out_lines.append(line)
-                        # Start new line with current token (trim leading spaces only)
                         line = tok.lstrip()
 
-            # Push whatever remains (don’t strip—preserve trailing spaces)
             out_lines.append(line)
 
         return out_lines
 
+
     # ---------------- core drawing ----------------
 
     def _compute_layout(self, img_w, img_h, draw, text, font, stroke_width, padding,
-                        h_align, v_align, x_shift, y_shift, line_spacing, use_cache):
+                    h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, use_cache):
         """
         Manual multiline layout so stroke/fill line positions are identical.
 
-        IMPORTANT: We compute the visual extents (min_left / max_right) from each line's
-        textbbox (which already includes stroke when stroke_width > 0). This gives a
-        correct block width for the background box and eliminates the right-side gap
-        when stroke is enabled.
-
+        IMPORTANT: We compute the visual extents using per-line bbox plus letter spacing,
+        so background boxes and centering reflect tracking.
         Returns:
           (lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y)
         """
-        if self._cached is None or not use_cache:
-            lines = self._wrap_lines(draw, text, font, img_w, padding)
+        need_recompute = True
+        if self._cached is not None and use_cache:
+            # the last element of the cache is the letter_spacing it was computed with
+            cached_letter_spacing = self._cached[-1]
+            if cached_letter_spacing == letter_spacing:
+                need_recompute = False
+
+        if need_recompute:
+            # wrap with spacing-aware width checks
+            lines = self._wrap_lines(draw, text, font, img_w, padding, letter_spacing)
 
             widths, heights, tops = [], [], []
-            lefts, rights = [], []
+            lefts, rights_sp = [], []
             for ln in lines:
                 # bbox includes stroke when stroke_width > 0
                 l, t, r, b = draw.textbbox((0, 0), ln, font=font, stroke_width=stroke_width)
-                widths.append(r - l)
-                heights.append(b - t)
+                w = (r - l)
+                h = (b - t)
+                # add extra visual width from inter-char spacing
+                extra = max(0, len(ln) - 1) * letter_spacing
+                widths.append(w + extra)
+                heights.append(h)
                 tops.append(t)
                 lefts.append(l)
-                rights.append(r)
+                rights_sp.append(r + extra)
 
             min_left = min(lefts) if lefts else 0
-            max_right = max(rights) if rights else 0
-            block_w = max_right - min_left if rights else 0
+            max_right = max(rights_sp) if rights_sp else 0
+            block_w = max_right - min_left if rights_sp else 0
             block_h = sum(heights) + (len(heights) - 1) * line_spacing if heights else 0
             min_top = min(tops) if tops else 0  # may be negative for ascenders
 
-            # cache results to reuse on subsequent frames
-            self._cached = (lines, widths, heights, tops, min_top, min_left, block_w, block_h)
+            # cache results to reuse on subsequent frames (append letter_spacing)
+            self._cached = (lines, widths, heights, tops, min_top, min_left, block_w, block_h, letter_spacing)
 
-        lines, widths, heights, tops, min_top, min_left, block_w, block_h = self._cached
+        lines, widths, heights, tops, min_top, min_left, block_w, block_h, _ = self._cached
 
-        # Horizontal anchor for the *visual* block (uses min_left/max_right)
+        # Horizontal anchor for the *visual* block (uses min_left/max_right w/ spacing)
         if h_align == "left":
             x0 = padding
         elif h_align == "center":
@@ -198,12 +207,14 @@ class TextOverlay:
 
         return lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y
 
+
     def draw_text(
         self,
         image,
         text,
         all_caps,
         font_size,
+        letter_spacing,
         font,
         fill_color_hex,
         fill_alpha,
@@ -249,9 +260,9 @@ class TextOverlay:
          x0, visual_top_y) = self._compute_layout(
             image.width, image.height, draw, text, self._loaded_font, sw,
             padding, horizontal_alignment, vertical_alignment, x_shift, y_shift,
-            line_spacing, use_cache
+            line_spacing, letter_spacing, use_cache
         )
-
+        
         # Convert the visual top into the baseline y for the first line
         first_line_baseline_y = visual_top_y - min_top
 
@@ -282,10 +293,14 @@ class TextOverlay:
 
             yy = first_line_baseline_y
             for ln, h in zip(lines, heights):
-                od.text((x_draw + sdx, yy + sdy), ln, font=self._loaded_font, fill=(sh_r, sh_g, sh_b, sh_a))
+                xx = x_draw
+                for ch in ln:
+                    od.text((xx + sdx, yy + sdy), ch, font=self._loaded_font, fill=(sh_r, sh_g, sh_b, sh_a))
+                    xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
                 yy += int(round(h + line_spacing))
 
             image = Image.alpha_composite(image, overlay)
+
 
         # Stroke + Fill (per-line; identical geometry/positions)
         fr, fg, fb = self.hex_to_rgb(fill_color_hex)
@@ -298,25 +313,33 @@ class TextOverlay:
 
         yy = first_line_baseline_y
         for ln, h in zip(lines, heights):
-            if sw > 0 and sa > 0:
-                od.text(
-                    (x_draw, yy),
-                    ln,
-                    font=self._loaded_font,
-                    fill=(sr, sg, sb, sa),
-                    stroke_width=sw,
-                    stroke_fill=(sr, sg, sb, sa),
-                )
-            if fa > 0:
-                od.text(
-                    (x_draw, yy),
-                    ln,
-                    font=self._loaded_font,
-                    fill=(fr, fg, fb, fa),
-                )
+            # draw one character at a time to inject letter spacing
+            xx = x_draw
+            for ch in ln:
+                if sw > 0 and sa > 0:
+                    od.text(
+                        (xx, yy),
+                        ch,
+                        font=self._loaded_font,
+                        fill=(sr, sg, sb, sa),
+                        stroke_width=sw,
+                        stroke_fill=(sr, sg, sb, sa),
+                    )
+                if fa > 0:
+                    od.text(
+                        (xx, yy),
+                        ch,
+                        font=self._loaded_font,
+                        fill=(fr, fg, fb, fa),
+                    )
+
+                # advance by glyph width + custom letter spacing
+                xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
+
             yy += int(round(h + line_spacing))
 
         image = Image.alpha_composite(image, overlay)
+
         return image.convert("RGB")
 
     # ---------------- Comfy entrypoint ----------------
@@ -325,8 +348,9 @@ class TextOverlay:
         self,
         image,
         text,
-        all_caps,  # NEW
+        all_caps,
         font_size,
+        letter_spacing,
         font,
         fill_color_hex,
         fill_alpha,
@@ -358,7 +382,7 @@ class TextOverlay:
             pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
             out_img = self.draw_text(
                 pil_img, text, all_caps,
-                font_size, font,
+                font_size, letter_spacing, font,
                 fill_color_hex, fill_alpha,
                 stroke_enable,
                 stroke_color_hex, stroke_alpha, stroke_thickness,
@@ -380,7 +404,7 @@ class TextOverlay:
                 pil_img = Image.fromarray((arr * 255).astype(np.uint8))
                 out_img = self.draw_text(
                     pil_img, text, all_caps,
-                    font_size, font,
+                    font_size, letter_spacing, font,
                     fill_color_hex, fill_alpha,
                     stroke_enable,
                     stroke_color_hex, stroke_alpha, stroke_thickness,
