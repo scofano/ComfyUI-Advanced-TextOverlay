@@ -100,11 +100,11 @@ To install the **Advanced Text Overlay** node:
 | **fill_color_hex**       | String        | Text fill color in hex format (e.g., `#FFFFFF`).                              |
 | **stroke_color_hex**     | String        | Stroke (outline) color in hex format (e.g., `#000000`).                       |
 | **stroke_thickness**     | Float         | Thickness of the text outline.                                                |
-| **padding**              | Float         | Additional space around the text block. Useful for multi-line layouts.        |
+| **padding**              | Integer       | Additional space around the text block. Useful for multi-line layouts.        |
 | **horizontal_alignment** | Enum          | `left`, `center`, or `right` horizontal alignment.                            |
 | **vertical_alignment**   | Enum          | `top`, `middle`, or `bottom` vertical alignment.                              |
-| **x_shift**              | Float         | Horizontal offset adjustment (pixels).                                        |
-| **y_shift**              | Float         | Vertical offset adjustment (pixels).                                          |
+| **x_shift**              | Integer       | Horizontal offset adjustment (pixels).                                        |
+| **y_shift**              | Integer       | Vertical offset adjustment (pixels).                                          |
 | **line_spacing**         | Float         | Vertical spacing between lines of text.                                       |
 | **letter_spacing**       | Float         | Horizontal spacing between letters.                                           |
 
