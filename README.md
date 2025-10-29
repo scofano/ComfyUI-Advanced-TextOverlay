@@ -47,11 +47,10 @@ This node extends and refines the classic ComfyUI Text Overlay concept with a **
 * Each animation type manipulates opacity and/or position offsets frame-by-frame.
 
 Supported Animation Types:
-<p align="center">
-  <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExY2E0cjU5bnViOHh5enljOXE1aGJ3cHByanR0aW1hbjUzM2FpcHhnYiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/eGUpaQNTuS2qDeTfGB/giphy.gif" alt="Fade_in" width="400"/>
-  <br>
-  <em>Fade_in</em>
-</p>
+| ![Fade_in](https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExY2E0cjU5bnViOHh5enljOXE1aGJ3cHByanR0aW1hbjUzM2FpcHhnYiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/eGUpaQNTuS2qDeTfGB/giphy.gif) |
+|:--:|
+| *Fade_in* |
+
 
 
 Easing Modes:
