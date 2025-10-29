@@ -47,14 +47,8 @@ This node extends and refines the classic ComfyUI Text Overlay concept with a **
 * Each animation type manipulates opacity and/or position offsets frame-by-frame.
 
 Supported Animation Types:
-| Animation Kind       | Description                                               |
-| -------------------- | --------------------------------------------------------- |
-| **fade_in**          | Gradually increases opacity from 0 → target.              |
-| **fade_out**         | Gradually decreases opacity from target → 0.              |
-| **move_from_top**    | Moves text upward from off-screen top into position.      |
-| **move_from_bottom** | Moves text downward from off-screen bottom into position. |
-| **move_from_left**   | Moves text from left edge into position.                  |
-| **move_from_right**  | Moves text from right edge into position.                 |
+![Fade_in](https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExY2E0cjU5bnViOHh5enljOXE1aGJ3cHByanR0aW1hbjUzM2FpcHhnYiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/eGUpaQNTuS2qDeTfGB/giphy.gif)
+*Fade_in*
 
 Easing Modes:
 | Easing          | Behavior                              |
