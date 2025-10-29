@@ -1,74 +1,81 @@
 import os
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageChops
+
+# Relative import so it works as a package module in ComfyUI
+from . import animations
 
 class TextOverlay:
     """
     Text overlay node with:
       - Fill/stroke alpha
-      - Shadow and background box
+      - Shadow and background box (both animate with opacity)
       - Pixel-perfect stroke alignment for MULTILINE text
       - Even stroke width for crisper edges
       - Default vertical_alignment = 'middle'
+      - Batch animation: uses the first `animation_frames` frames for the animation,
+        then holds the final pose for the rest of the video.
+      - Mask animations removed. Renamed kinds: fade_in/fade_out, move_from_*.
     """
 
     _horizontal_alignments = ["left", "center", "right"]
     _vertical_alignments = ["top", "middle", "bottom"]
 
-    def __init__(self, device="cpu"):
-        self.device = device
-        self._loaded_font = None
-        # cache (lines, widths, heights, tops, min_top, min_left, block_w, block_h)
-        self._cached = None
-        self._x = None
-        self._y = None
-
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                # keep image first so the node wiring stays obvious
                 "image": ("IMAGE",),
 
                 # UI order (top → bottom)
                 "text": ("STRING", {"multiline": True, "default": "the quick brown fox\njumps over the lazy dog"}),
                 "all_caps": ("BOOLEAN", {"default": False}),
 
-                # font, font-size, font color, font alpha, padding, line_spacing
+                # font, font-size, font color, font alpha
                 "font": ("STRING", {"default": "ariblk.ttf"}),
                 "font_size": ("INT", {"default": 32, "min": 1, "max": 9999, "step": 1}),
                 "letter_spacing": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 50.0, "step": 0.5}),
                 "font_alignment": (cls._horizontal_alignments, {"default": "center"}),
-                "line_spacing": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 50.0, "step": 0.5}),
-                "padding": ("INT", {"default": 16, "min": 0, "max": 1024, "step": 1}),
                 "fill_color_hex": ("STRING", {"default": "#FFFFFF"}),
                 "fill_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
-                # hor_align, x_shift, vert align, y_shift
+                # padding, alignment, offsets
+                "padding": ("INT", {"default": 16, "min": 0, "max": 1024, "step": 1}),
                 "vertical_alignment": (cls._vertical_alignments, {"default": "middle"}),
                 "y_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
                 "horizontal_alignment": (cls._horizontal_alignments, {"default": "center"}),
                 "x_shift": ("INT", {"default": 0, "min": -1024, "max": 1024, "step": 1}),
+                "line_spacing": ("FLOAT", {"default": 4.0, "min": 0.0, "max": 50.0, "step": 0.5}),
 
-                # all strokes
+                # strokes
                 "stroke_enable": ("BOOLEAN", {"default": True}),
                 "stroke_color_hex": ("STRING", {"default": "#000000"}),
                 "stroke_thickness": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "stroke_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
-                # all boxes
+                # background box
                 "bg_enable": ("BOOLEAN", {"default": False}),
                 "bg_padding": ("INT", {"default": 8, "min": 0, "max": 1024, "step": 1}),
                 "bg_radius": ("INT", {"default": 8, "min": 0, "max": 512, "step": 1}),
                 "bg_color_hex": ("STRING", {"default": "#000000"}),
                 "bg_alpha": ("FLOAT", {"default": 0.50, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
 
-                # all shadows
+                # shadow
                 "shadow_enable": ("BOOLEAN", {"default": False}),
                 "shadow_distance": ("INT", {"default": 3, "min": -50, "max": 50, "step": 1}),
                 "shadow_color_hex": ("STRING", {"default": "#000000"}),
-                "shadow_alpha": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
+                "shadow_alpha": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
+
+                # --- animation controls ---
+                "animate": ("BOOLEAN", {"default": False}),
+                "animation_kind": ([
+                    "fade_in", "fade_out",
+                    "move_from_top", "move_from_bottom", "move_from_left", "move_from_right",
+                ], {"default": "fade_in"}),
+                "animation_frames": ("INT", {"default": 32, "min": 1, "max": 1000, "step": 1}),
+                "animation_ease": (["linear","ease_in","ease_out","ease_in_out"], {"default": "ease_in_out"}),
+                "animation_opacity_target": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
             }
         }
 
@@ -85,14 +92,13 @@ class TextOverlay:
         return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
     def _normalize_text(self, text: str) -> str:
-        # Convert literal "\n" to actual newlines
         return text.replace("\\n", "\n").replace("\\N", "\n")
 
     def _load_font(self, font, font_size):
         fonts_dir = os.path.join(os.path.dirname(__file__), "fonts")
         font_path = os.path.join(fonts_dir, font)
         if not os.path.exists(font_path):
-            font_path = font  # fallback to system path or provided absolute path
+            font_path = font
         try:
             return ImageFont.truetype(font_path, font_size)
         except Exception as e:
@@ -100,26 +106,17 @@ class TextOverlay:
             return ImageFont.load_default()
 
     def _wrap_lines(self, draw, text, font, max_width, padding, letter_spacing):
-        """
-        Greedy wrapping that respects explicit newlines and preserves spaces
-        (including multiple consecutive spaces).
-        """
         import re
-
         paragraphs = self._normalize_text(text).split("\n")
         out_lines = []
-
         for para in paragraphs:
             if para == "":
                 out_lines.append("")
                 continue
-
             tokens = re.findall(r"\S+|\s+", para)
-
             line = ""
             for tok in tokens:
                 candidate = line + tok
-                # include tracking in the width test
                 char_count = max(0, len(candidate) - 1)
                 candidate_px = draw.textlength(candidate, font=font) + char_count * letter_spacing
                 if candidate_px <= (max_width - 2 * padding):
@@ -131,52 +128,33 @@ class TextOverlay:
                     else:
                         out_lines.append(line)
                         line = tok.lstrip()
-
             out_lines.append(line)
-
         return out_lines
-
 
     # ---------------- core drawing ----------------
 
     def _compute_layout(self, img_w, img_h, draw, text, font, stroke_width, padding,
-                    h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, font_size, use_cache):
-        """
-        Manual multiline layout so stroke/fill line positions are identical.
-
-        IMPORTANT: We compute the visual extents using per-line bbox plus letter spacing,
-        so background boxes and centering reflect tracking.
-        Returns:
-          (lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y)
-        """
-        
-        # derive a stable identifier for the font face (works across new FreeTypeFont instances)
+                        h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, font_size, use_cache):
         try:
             current_font_id = (font.getname(), getattr(font, "path", None))
         except Exception:
             current_font_id = (None, None)
-                
+
         need_recompute = True
-        
-        if self._cached is not None and use_cache:
+        if hasattr(self, "_cached") and self._cached is not None and use_cache:
             (*_, cached_letter_spacing, cached_stroke_width,
              cached_text, cached_font_id, cached_font_size, cached_padding, cached_line_spacing) = self._cached
-            if (
-                cached_letter_spacing == letter_spacing and
+            if (cached_letter_spacing == letter_spacing and
                 cached_stroke_width   == stroke_width   and
                 cached_text           == text           and
                 cached_font_id        == current_font_id and
                 cached_font_size      == font_size      and
                 cached_padding        == padding        and
-                cached_line_spacing   == line_spacing
-            ):
+                cached_line_spacing   == line_spacing):
                 need_recompute = False
 
-
         if need_recompute:
-            # wrap with spacing-aware width checks
             lines = self._wrap_lines(draw, text, font, img_w, padding, letter_spacing)
-
             widths, heights, tops = [], [], []
             lefts, rights_sp = [], []
             for ln in lines:
@@ -196,7 +174,6 @@ class TextOverlay:
             block_h = sum(heights) + (len(heights) - 1) * line_spacing if heights else 0
             min_top = min(tops) if tops else 0
 
-            # cache results to reuse on subsequent frames (append both letter_spacing and stroke_width)
             self._cached = (
                 lines, widths, heights, tops, min_top, min_left,
                 block_w, block_h,
@@ -204,29 +181,23 @@ class TextOverlay:
                 text, current_font_id, font_size, padding, line_spacing
             )
 
-
-        # unpack cached values
         (lines, widths, heights, tops, min_top, min_left,
-         block_w, block_h, cached_letter_spacing, cached_stroke_width, *_) = self._cached
+         block_w, block_h, _cached_letter_spacing, _cached_stroke_width, *_) = self._cached
 
-
-        # Horizontal anchor for the *visual* block (uses min_left/max_right w/ spacing)
         if h_align == "left":
             x0 = padding
         elif h_align == "center":
             x0 = (img_w - block_w) / 2
-        else:  # right
+        else:
             x0 = img_w - block_w - padding
 
-        # Vertical anchor for the *visual* block
         if v_align == "top":
             visual_top_y = padding
         elif v_align == "middle":
             visual_top_y = (img_h - block_h) / 2
-        else:  # bottom
+        else:
             visual_top_y = img_h - block_h - padding
 
-        # Snap + shifts
         x0 = int(round(x0 + x_shift))
         visual_top_y = int(round(visual_top_y + y_shift))
 
@@ -263,51 +234,50 @@ class TextOverlay:
         shadow_distance,
         font_alignment,
         use_cache=False,
+        opacity_scale=1.0,
+        dx=0,
+        dy=0
     ):
-        # Prepare
         if image.mode != "RGBA":
             image = image.convert("RGBA")
-        self._loaded_font = self._load_font(font, font_size)
+        loaded_font = self._load_font(font, font_size)
         draw = ImageDraw.Draw(image, "RGBA")
 
-        # Apply ALL CAPS if requested (after literal "\n" handling via _wrap_lines)
         if all_caps:
-            # Uppercase before wrapping so measurement/layout reflect final glyphs
             text = text.upper()
 
-        # Compute even stroke width (recommended for crisp outlines)
+        opacity_scale = max(0.0, min(1.0, float(opacity_scale)))
+        fill_alpha = max(0.0, min(1.0, float(fill_alpha) * opacity_scale))
+        stroke_alpha = max(0.0, min(1.0, float(stroke_alpha) * opacity_scale))
+        x_shift = int(round(x_shift + dx))
+        y_shift = int(round(y_shift + dy))
+
         sw = int(round(font_size * stroke_thickness * 0.5)) if stroke_enable else 0
         if sw % 2 == 1 and sw > 0:
             sw += 1
 
-        # Layout (manual lines)
         (lines, widths, heights, tops, min_top, min_left, block_w, block_h,
          x0, visual_top_y) = self._compute_layout(
-            image.width, image.height, draw, text, self._loaded_font, sw,
+            image.width, image.height, draw, text, loaded_font, sw,
             padding, horizontal_alignment, vertical_alignment, x_shift, y_shift,
             line_spacing, letter_spacing, font_size, use_cache
         )
 
-        
-        # Convert the visual top into the baseline y for the first line
         first_line_baseline_y = visual_top_y - min_top
-
-        # This is the x where we actually draw glyphs so that the visual left aligns to x0
         x_draw = x0 - min_left
 
-        # Per-line offsets to align each line within the block
         def _line_offset(i):
             if font_alignment == "left":
                 return 0
             elif font_alignment == "center":
                 return int(round((block_w - widths[i]) / 2))
-            else:  # "right"
+            else:
                 return int(round(block_w - widths[i]))
 
-        # Background box (perfectly aligned with visual extents)
+        # Background (animated alpha)
         if bg_enable and block_w > 0 and block_h > 0:
             br, bgc, bb = self.hex_to_rgb(bg_color_hex)
-            ba = int(max(0.0, min(1.0, bg_alpha)) * 255)
+            ba = int(max(0.0, min(1.0, float(bg_alpha) * opacity_scale)) * 255)
             rect = [x0 - bg_padding, visual_top_y - bg_padding,
                     x0 + block_w + bg_padding, visual_top_y + block_h + bg_padding]
             overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -318,26 +288,26 @@ class TextOverlay:
                 od.rectangle(rect, fill=(br, bgc, bb, ba))
             image = Image.alpha_composite(image, overlay)
 
-        # Shadow (per-line, before stroke/fill)
+        # Shadow (animated alpha)
         if shadow_enable and block_w > 0 and block_h > 0:
             sh_r, sh_g, sh_b = self.hex_to_rgb(shadow_color_hex)
-            sh_a = int(max(0.0, min(1.0, shadow_alpha)) * 255)
+            sh_a = int(max(0.0, min(1.0, float(shadow_alpha) * opacity_scale)) * 255)
             sdx = sdy = int(shadow_distance)
             overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
             od = ImageDraw.Draw(overlay, "RGBA")
 
             yy = first_line_baseline_y
             for i, (ln, h) in enumerate(zip(lines, heights)):
-                xx = x_draw + _line_offset(i)     # NEW
+                xx = x_draw + _line_offset(i)
                 for ch in ln:
-                    od.text((xx + sdx, yy + sdy), ch, font=self._loaded_font,
+                    od.text((xx + sdx, yy + sdy), ch, font=loaded_font,
                             fill=(sh_r, sh_g, sh_b, sh_a))
-                    xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
+                    xx += draw.textlength(ch, font=loaded_font) + letter_spacing
                 yy += int(round(h + line_spacing))
+
             image = Image.alpha_composite(image, overlay)
 
-
-        # Stroke + Fill (per-line; identical geometry/positions)
+        # Stroke + Fill
         fr, fg, fb = self.hex_to_rgb(fill_color_hex)
         fa = int(max(0.0, min(1.0, fill_alpha)) * 255)
         sr, sg, sb = self.hex_to_rgb(stroke_color_hex)
@@ -348,15 +318,15 @@ class TextOverlay:
 
         yy = first_line_baseline_y
         for i, (ln, h) in enumerate(zip(lines, heights)):
-            xx = x_draw + _line_offset(i)         # NEW
+            xx = x_draw + _line_offset(i)
             for ch in ln:
                 if sw > 0 and sa > 0:
-                    od.text((xx, yy), ch, font=self._loaded_font,
+                    od.text((xx, yy), ch, font=loaded_font,
                             fill=(sr, sg, sb, sa),
                             stroke_width=sw, stroke_fill=(sr, sg, sb, sa))
                 if fa > 0:
-                    od.text((xx, yy), ch, font=self._loaded_font, fill=(fr, fg, fb, fa))
-                xx += draw.textlength(ch, font=self._loaded_font) + letter_spacing
+                    od.text((xx, yy), ch, font=loaded_font, fill=(fr, fg, fb, fa))
+                xx += draw.textlength(ch, font=loaded_font) + letter_spacing
             yy += int(round(h + line_spacing))
 
         image = Image.alpha_composite(image, overlay)
@@ -395,35 +365,29 @@ class TextOverlay:
         shadow_alpha,
         shadow_distance,
         font_alignment,
+        animate=False,
+        animation_kind='fade_in',
+        animation_frames=24,
+        animation_ease='ease_out',
+        animation_opacity_target=1.0
     ):
-        """Handles both single and batch image processing (with layout caching across frames)."""
+        """
+        Single image (H,W,C):
+          - animate=False  -> one output image
+          - animate=True   -> returns exactly `animation_frames` frames
 
-        # Single image
+        Batch (B,H,W,C) video:
+          - animate=False  -> draw per-frame with no animation changes
+          - animate=True   -> animation starts at frame 0 and completes at frame `animation_frames-1`.
+                              From then on, the final pose is held until frame B-1.
+        """
+
+        # Single image (H, W, C)
         if len(image.shape) == 3:
             np_img = image.cpu().numpy()
             pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
-            out_img = self.draw_text(
-                pil_img, text, all_caps,
-                font_size, letter_spacing, font,
-                fill_color_hex, fill_alpha,
-                stroke_enable,
-                stroke_color_hex, stroke_alpha, stroke_thickness,
-                padding, horizontal_alignment, vertical_alignment,
-                x_shift, y_shift, line_spacing,
-                bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,font_alignment,
-                use_cache=False,
-            )
-            out = np.array(out_img).astype(np.float32) / 255.0
-            return (torch.tensor(out),)
 
-        # Batch of images
-        else:
-            np_imgs = image.cpu().numpy()
-            outs = []
-            use_cache = False
-            for arr in np_imgs:
-                pil_img = Image.fromarray((arr * 255).astype(np.uint8))
+            if not animate:
                 out_img = self.draw_text(
                     pil_img, text, all_caps,
                     font_size, letter_spacing, font,
@@ -433,11 +397,127 @@ class TextOverlay:
                     padding, horizontal_alignment, vertical_alignment,
                     x_shift, y_shift, line_spacing,
                     bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance,font_alignment,
-                    use_cache=use_cache,  # reuse wrapped lines/metrics for next frames
+                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                    use_cache=False,
+                )
+                out = np.array(out_img).astype(np.float32) / 255.0
+                return (torch.tensor(out),)
+
+            T = max(1, int(animation_frames))
+            outs = []
+
+            # Prime layout cache
+            _ = self.draw_text(
+                pil_img, text, all_caps,
+                font_size, letter_spacing, font,
+                fill_color_hex, 1.0,
+                stroke_enable,
+                stroke_color_hex, 1.0, stroke_thickness,
+                padding, horizontal_alignment, vertical_alignment,
+                x_shift, y_shift, line_spacing,
+                bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                use_cache=False,
+            )
+            use_cache = True
+
+            for t_idx in range(T):
+                p = animations.progress(t_idx, max(1, T - 1), animation_ease)
+                op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+
+                out_img = self.draw_text(
+                    pil_img, text, all_caps,
+                    font_size, letter_spacing, font,
+                    fill_color_hex, fill_alpha,
+                    stroke_enable,
+                    stroke_color_hex, stroke_alpha, stroke_thickness,
+                    padding, horizontal_alignment, vertical_alignment,
+                    x_shift, y_shift, line_spacing,
+                    bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                    use_cache=use_cache,
+                    opacity_scale=op,
+                    dx=dx,
+                    dy=dy,
                 )
                 outs.append(np.array(out_img).astype(np.float32) / 255.0)
-                use_cache = True
+
             return (torch.tensor(np.stack(outs)),)
+
+        # Batch (B, H, W, C)
+        if not (hasattr(image, "shape") and len(image.shape) == 4):
+            raise ValueError("Unsupported image tensor shape")
+
+        B, H, W, C = image.shape
+
+        if not animate:
+            out_list = []
+            for i in range(B):
+                np_img = image[i].cpu().numpy()
+                pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
+                out_img = self.draw_text(
+                    pil_img, text, all_caps,
+                    font_size, letter_spacing, font,
+                    fill_color_hex, fill_alpha,
+                    stroke_enable,
+                    stroke_color_hex, stroke_alpha, stroke_thickness,
+                    padding, horizontal_alignment, vertical_alignment,
+                    x_shift, y_shift, line_spacing,
+                    bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                    use_cache=False,
+                )
+                out_list.append(np.array(out_img).astype(np.float32) / 255.0)
+            return (torch.tensor(np.stack(out_list)),)
+
+        # Animated batch: animate on frames [0 .. T-1], then hold on frames [T .. B-1]
+        T = max(1, int(animation_frames))
+
+        # Prime cache once using first frame
+        np_img0 = image[0].cpu().numpy()
+        pil_img0 = Image.fromarray((np_img0 * 255).astype(np.uint8))
+        _ = self.draw_text(
+            pil_img0, text, all_caps,
+            font_size, letter_spacing, font,
+            fill_color_hex, 1.0,
+            stroke_enable,
+            stroke_color_hex, 1.0, stroke_thickness,
+            padding, horizontal_alignment, vertical_alignment,
+            x_shift, y_shift, line_spacing,
+            bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+            shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+            use_cache=False,
+        )
+        use_cache = True
+
+        out_list = []
+        for i in range(B):
+            np_img = image[i].cpu().numpy()
+            pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
+
+            eff_t = min(i, T - 1)  # frames beyond T-1 hold the last pose
+            p = animations.progress(eff_t, max(1, T - 1), animation_ease)
+            op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+            dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+
+            out_img = self.draw_text(
+                pil_img, text, all_caps,
+                font_size, letter_spacing, font,
+                fill_color_hex, fill_alpha,
+                stroke_enable,
+                stroke_color_hex, stroke_alpha, stroke_thickness,
+                padding, horizontal_alignment, vertical_alignment,
+                x_shift, y_shift, line_spacing,
+                bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                use_cache=use_cache,
+                opacity_scale=op,
+                dx=dx,
+                dy=dy,
+            )
+            out_list.append(np.array(out_img).astype(np.float32) / 255.0)
+
+        return (torch.tensor(np.stack(out_list)),)
 
 NODE_CLASS_MAPPINGS = {"Advanced Text Overlay": TextOverlay}
