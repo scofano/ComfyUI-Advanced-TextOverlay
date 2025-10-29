@@ -41,13 +41,63 @@ This node extends and refines the classic ComfyUI Text Overlay concept with a **
 * Supports both `.ttf` and `.otf` formats.
 * Graceful fallback to a system font if a specified font is unavailable.
 
-### ⚙️ 5. Batch and Workflow Enhancements
+### 🎞️ 5. New Animation Feature
+
+* The node now supports smooth text animations via the new animations.py module.
+* Each animation type manipulates opacity and/or position offsets frame-by-frame.
+
+Supported Animation Types:
+| Animation Kind       | Description                                               |
+| -------------------- | --------------------------------------------------------- |
+| **fade_in**          | Gradually increases opacity from 0 → target.              |
+| **fade_out**         | Gradually decreases opacity from target → 0.              |
+| **move_from_top**    | Moves text upward from off-screen top into position.      |
+| **move_from_bottom** | Moves text downward from off-screen bottom into position. |
+| **move_from_left**   | Moves text from left edge into position.                  |
+| **move_from_right**  | Moves text from right edge into position.                 |
+
+Easing Modes:
+| Easing          | Behavior                              |
+| --------------- | ------------------------------------- |
+| **linear**      | Uniform speed.                        |
+| **ease_in**     | Starts slow, speeds up.               |
+| **ease_out**    | Starts fast, slows down.              |
+| **ease_in_out** | Smooth acceleration and deceleration. |
+
+Animation Parameters
+| Parameter                    | Type    | Description                                                 |
+| ---------------------------- | ------- | ----------------------------------------------------------- |
+| **animate**                  | Boolean | Enable or disable animation.                                |
+| **animation_kind**           | Enum    | Selects animation type (`fade_in`, `move_from_left`, etc.). |
+| **animation_frames**         | Integer | Number of frames to complete the animation.                 |
+| **animation_ease**           | Enum    | Easing curve for smooth motion.                             |
+| **animation_opacity_target** | Float   | Target opacity multiplier for animation.                    |
+
+Behavior:
+
+* For single images, the node outputs either one static frame or an animated sequence.
+
+* For batches/videos, animation applies over the first animation_frames frames, then holds the final pose.
+
+Technical Summary:
+
+The animation module provides:
+
+* progress(t, T_minus1, ease): easing interpolation over frames.
+
+* compute_opacity(kind, p, target): calculates alpha fade transitions.
+
+* compute_offsets(kind, p, img_w, img_h): determines X/Y displacement for move animations.
+
+These functions are integrated directly into the node’s rendering loop for seamless animated overlays
+
+### ⚙️ 6. Batch and Workflow Enhancements
 
 * Native **batch support** — automatically applies consistent overlay logic across all input images.
 * Optimized performance and memory use when processing large image sets.
 * Node parameters persist and preview correctly in ComfyUI sessions.
 
-### 🧩 6. Developer & Extensibility Features
+### 🧩 7. Developer & Extensibility Features
 
 * Modularized code for easier maintenance and feature additions.
 * Clean separation between text layout and rendering logic.
