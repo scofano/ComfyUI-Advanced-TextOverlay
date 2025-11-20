@@ -1,4 +1,5 @@
 import os
+import subprocess
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont, ImageChops
@@ -643,6 +644,9 @@ class TextOverlayVideo:
         Shows progress in:
           - ComfyUI (ProgressBar)
           - Console (tqdm)
+
+        After writing the processed video, we mux the original audio track
+        from `video_path` into the output file using ffmpeg, if available.
         """
         if not video_path or not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -669,7 +673,6 @@ class TextOverlayVideo:
 
         # 2) Otherwise, estimate from duration * fps if we have that
         elif isinstance(duration, (int, float)) and duration > 0 and fps > 0:
-            
             total_frames = int(duration * fps)
 
         # ComfyUI progress bar
@@ -682,7 +685,6 @@ class TextOverlayVideo:
             frame_iter = tqdm(reader, total=total_frames, desc="TextOverlayVideo")
         else:
             frame_iter = tqdm(reader, desc="TextOverlayVideo")
-
 
         T = max(1, int(animation_frames)) if animate else 1
 
@@ -752,6 +754,45 @@ class TextOverlayVideo:
         finally:
             writer.close()
             reader.close()
+
+        # ---- NEW: mux original audio into the processed video using ffmpeg ----
+        try:
+            # We create a temporary output file, then replace the original out_path
+            tmp_out = out_path + ".tmp_audio.mp4"
+
+            # ffmpeg command:
+            #   - input 0: processed video (no audio)
+            #   - input 1: original video (with audio)
+            #   - copy streams without re-encoding: -c copy
+            #   - map video from 0, audio from 1
+            cmd = [
+                "ffmpeg",
+                "-y",                   # overwrite without asking
+                "-i", out_path,
+                "-i", video_path,
+                "-c", "copy",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                tmp_out,
+            ]
+
+            completed = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            if completed.returncode == 0:
+                os.replace(tmp_out, out_path)
+            else:
+                # If something goes wrong, keep the silent video and print the error
+                print("[TextOverlayVideo] ffmpeg failed to mux audio, keeping silent video.")
+                print(completed.stderr.decode("utf-8", errors="ignore"))
+
+        except Exception as e:
+            # Fail gracefully: overlay still works, just no audio
+            print(f"[TextOverlayVideo] Could not mux audio from original video: {e}")
 
         # Return STRING so it can be wired or ignored; node still runs even if not connected
         return (out_path,)
