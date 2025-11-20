@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont, ImageChops
 
-# NEW:
 import imageio.v2 as imageio
 
 try:
@@ -567,6 +566,8 @@ class TextOverlayVideo:
             "video_path": ("STRING", {"multiline": False, "default": ""}),
             # filename prefix for the output in ComfyUI's output dir
             "filename_prefix": ("STRING", {"default": "TxtOver"}),
+            # NEW: delete original input video after processing
+            "delete_original": ("BOOLEAN", {"default": False}),
         }
         required.update(base)
 
@@ -600,42 +601,44 @@ class TextOverlayVideo:
         return out_full
 
     def process_video(
-        self,
-        video_path,
-        filename_prefix,
-        text,
-        all_caps,
-        font,
-        font_size,
-        letter_spacing,
-        font_alignment,
-        fill_color_hex,
-        fill_alpha,
-        stroke_enable,
-        stroke_color_hex,
-        stroke_thickness,
-        stroke_alpha,
-        padding,
-        vertical_alignment,
-        y_shift,
-        horizontal_alignment,
-        x_shift,
-        line_spacing,
-        bg_enable,
-        bg_padding,
-        bg_radius,
-        bg_color_hex,
-        bg_alpha,
-        shadow_enable,
-        shadow_distance,
-        shadow_color_hex,
-        shadow_alpha,
-        animate,
-        animation_kind,
-        animation_frames,
-        animation_ease,
-        animation_opacity_target,
-    ):
+    self,
+    video_path,
+    filename_prefix,
+    delete_original,
+    text,
+    all_caps,
+    font,
+    font_size,
+    letter_spacing,
+    font_alignment,
+    fill_color_hex,
+    fill_alpha,
+    stroke_enable,
+    stroke_color_hex,
+    stroke_thickness,
+    stroke_alpha,
+    padding,
+    vertical_alignment,
+    y_shift,
+    horizontal_alignment,
+    x_shift,
+    line_spacing,
+    bg_enable,
+    bg_padding,
+    bg_radius,
+    bg_color_hex,
+    bg_alpha,
+    shadow_enable,
+    shadow_distance,
+    shadow_color_hex,
+    shadow_alpha,
+    animate,
+    animation_kind,
+    animation_frames,
+    animation_ease,
+    animation_opacity_target,
+):
+
         """
         Reads the video frame by frame, applies the same text overlay logic as the
         batch TextOverlay, and writes a new video file.
@@ -793,7 +796,19 @@ class TextOverlayVideo:
         except Exception as e:
             # Fail gracefully: overlay still works, just no audio
             print(f"[TextOverlayVideo] Could not mux audio from original video: {e}")
+        
+        # Return STRING so it can be wired or ignored; node still runs even if not connected
 
+        # NEW: optionally delete the original input video after processing is finished
+        if delete_original:
+            try:
+                os.remove(video_path)
+            except Exception as e:
+                print(f"[TextOverlayVideo] Failed to delete original video '{video_path}': {e}")
+
+        return (out_path,)
+
+        
         # Return STRING so it can be wired or ignored; node still runs even if not connected
         return (out_path,)
 
