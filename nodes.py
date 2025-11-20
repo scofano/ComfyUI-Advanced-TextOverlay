@@ -565,7 +565,7 @@ class TextOverlayVideo:
             # video path instead of tensor
             "video_path": ("STRING", {"multiline": False, "default": ""}),
             # filename prefix for the output in ComfyUI's output dir
-            "filename_prefix": ("STRING", {"default": "TextOverlay_"}),
+            "filename_prefix": ("STRING", {"default": "TxtOver"}),
         }
         required.update(base)
 
@@ -758,5 +758,5 @@ class TextOverlayVideo:
 
 NODE_CLASS_MAPPINGS = {
     "Advanced Text Overlay": TextOverlay,
-    "Advanced Text Overlay Video": TextOverlayVideo,
+    "Advanced Text Overlay - Video": TextOverlayVideo,
 }
