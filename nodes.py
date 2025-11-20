@@ -3,6 +3,21 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont, ImageChops
 
+# NEW:
+import imageio.v2 as imageio
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    # If tqdm isn't installed, fall back to a no-op wrapper
+    def tqdm(x, **kwargs):
+        return x
+
+try:
+    from comfy.utils import ProgressBar
+except Exception:
+    ProgressBar = None
+
 # Relative import so it works as a package module in ComfyUI
 from . import animations
 
@@ -81,7 +96,7 @@ class TextOverlay:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "batch_process"
-    CATEGORY = "image/text"
+    CATEGORY = "Advanced Text Overlay"
 
     # ---------------- helpers ----------------
 
@@ -520,4 +535,228 @@ class TextOverlay:
 
         return (torch.tensor(np.stack(out_list)),)
 
-NODE_CLASS_MAPPINGS = {"Advanced Text Overlay": TextOverlay}
+class TextOverlayVideo:
+    """
+    Video version of Advanced Text Overlay.
+
+    - Input: full video file path (STRING).
+    - Output: STRING with full path of processed video in ComfyUI's output folder.
+    - Uses the same text / animation controls as TextOverlay, and animates
+      over the first `animation_frames` frames, then holds the final pose.
+    """
+
+    _horizontal_alignments = TextOverlay._horizontal_alignments
+    _vertical_alignments = TextOverlay._vertical_alignments
+
+    # Make this an output node so the prompt has outputs
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        """
+        Mirrors TextOverlay.INPUT_TYPES but replaces `image` with `video_path`
+        and adds `filename_prefix`.
+        """
+        base = TextOverlay.INPUT_TYPES()["required"].copy()
+        # Remove image, we don't take an IMAGE tensor here
+        base.pop("image")
+
+        required = {
+            # video path instead of tensor
+            "video_path": ("STRING", {"multiline": False, "default": ""}),
+            # filename prefix for the output in ComfyUI's output dir
+            "filename_prefix": ("STRING", {"default": "TextOverlay_"}),
+        }
+        required.update(base)
+
+        return {"required": required}
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("video_path",)
+    FUNCTION = "process_video"
+    CATEGORY = "Advanced Text Overlay"
+
+    def _get_output_dir(self):
+        # Default ComfyUI output folder if available
+        try:
+            import folder_paths
+            return folder_paths.get_output_directory()
+        except Exception:
+            # Fallback if run standalone
+            out_dir = os.path.join(os.getcwd(), "output")
+            os.makedirs(out_dir, exist_ok=True)
+            return out_dir
+
+    def _make_unique_path(self, out_dir, filename_prefix, src_path):
+        src_base = os.path.splitext(os.path.basename(src_path))[0]
+        base_name = f"{filename_prefix}_{src_base}.mp4"
+        out_full = os.path.join(out_dir, base_name)
+        idx = 1
+        while os.path.exists(out_full):
+            base_name = f"{filename_prefix}_{src_base}_{idx}.mp4"
+            out_full = os.path.join(out_dir, base_name)
+            idx += 1
+        return out_full
+
+    def process_video(
+        self,
+        video_path,
+        filename_prefix,
+        text,
+        all_caps,
+        font,
+        font_size,
+        letter_spacing,
+        font_alignment,
+        fill_color_hex,
+        fill_alpha,
+        stroke_enable,
+        stroke_color_hex,
+        stroke_thickness,
+        stroke_alpha,
+        padding,
+        vertical_alignment,
+        y_shift,
+        horizontal_alignment,
+        x_shift,
+        line_spacing,
+        bg_enable,
+        bg_padding,
+        bg_radius,
+        bg_color_hex,
+        bg_alpha,
+        shadow_enable,
+        shadow_distance,
+        shadow_color_hex,
+        shadow_alpha,
+        animate,
+        animation_kind,
+        animation_frames,
+        animation_ease,
+        animation_opacity_target,
+    ):
+        """
+        Reads the video frame by frame, applies the same text overlay logic as the
+        batch TextOverlay, and writes a new video file.
+        Returns the full path string to the new video.
+
+        Shows progress in:
+          - ComfyUI (ProgressBar)
+          - Console (tqdm)
+        """
+        if not video_path or not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        out_dir = self._get_output_dir()
+        out_path = self._make_unique_path(out_dir, filename_prefix, video_path)
+
+        # Reuse your existing text overlay logic on each frame
+        overlay = TextOverlay()
+
+        reader = imageio.get_reader(video_path)
+        meta = reader.get_meta_data()
+        fps = meta.get("fps", 30)
+
+        # Try to get a sane total frame count
+        nframes_meta = meta.get("nframes", None)
+        duration = meta.get("duration", None)  # seconds, if available
+
+        total_frames = None
+
+        # 1) Trust nframes only if it's a reasonable integer
+        if isinstance(nframes_meta, (int, float)) and 0 < nframes_meta < 1e8:
+            total_frames = int(nframes_meta)
+
+        # 2) Otherwise, estimate from duration * fps if we have that
+        elif isinstance(duration, (int, float)) and duration > 0 and fps > 0:
+            
+            total_frames = int(duration * fps)
+
+        # ComfyUI progress bar
+        comfy_pbar = None
+        if ProgressBar is not None and isinstance(total_frames, int) and total_frames > 0:
+            comfy_pbar = ProgressBar(total_frames)
+
+        # tqdm progress bar
+        if isinstance(total_frames, int) and total_frames > 0:
+            frame_iter = tqdm(reader, total=total_frames, desc="TextOverlayVideo")
+        else:
+            frame_iter = tqdm(reader, desc="TextOverlayVideo")
+
+
+        T = max(1, int(animation_frames)) if animate else 1
+
+        writer = imageio.get_writer(
+            out_path,
+            fps=fps,
+            macro_block_size=1  # avoid auto-resizing to multiples of 16
+        )
+
+        try:
+            for i, frame in enumerate(frame_iter):
+                pil_img = Image.fromarray(frame)
+
+                # Animation timing: animate on frames [0 .. T-1], then hold last pose
+                if animate:
+                    eff_t = min(i, T - 1)
+                    p = animations.progress(eff_t, max(1, T - 1), animation_ease)
+                    op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                    dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+                else:
+                    op = 1.0
+                    dx = dy = 0
+
+                use_cache = (i > 0)
+
+                out_img = overlay.draw_text(
+                    pil_img,
+                    text,
+                    all_caps,
+                    font_size,
+                    letter_spacing,
+                    font,
+                    fill_color_hex,
+                    fill_alpha,
+                    stroke_enable,
+                    stroke_color_hex,
+                    stroke_alpha,
+                    stroke_thickness,
+                    padding,
+                    horizontal_alignment,
+                    vertical_alignment,
+                    x_shift,
+                    y_shift,
+                    line_spacing,
+                    bg_enable,
+                    bg_color_hex,
+                    bg_alpha,
+                    bg_padding,
+                    bg_radius,
+                    shadow_enable,
+                    shadow_color_hex,
+                    shadow_alpha,
+                    shadow_distance,
+                    font_alignment,
+                    use_cache=use_cache,
+                    opacity_scale=op,
+                    dx=dx,
+                    dy=dy,
+                )
+
+                writer.append_data(np.array(out_img))
+
+                # Update ComfyUI progress
+                if comfy_pbar is not None:
+                    comfy_pbar.update(1)
+
+        finally:
+            writer.close()
+            reader.close()
+
+        # Return STRING so it can be wired or ignored; node still runs even if not connected
+        return (out_path,)
+
+NODE_CLASS_MAPPINGS = {
+    "Advanced Text Overlay": TextOverlay,
+    "Advanced Text Overlay Video": TextOverlayVideo,
+}
