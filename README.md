@@ -1,11 +1,12 @@
 # 🖋️ ComfyUI Advanced Text Overlay
 
 **Repository:** [scofano/ComfyUI-Advanced-TextOverlay](https://github.com/scofano/ComfyUI-Advanced-TextOverlay)
+
 **Forked from:** [munkyfoot/ComfyUI-TextOverlay](https://github.com/munkyfoot/ComfyUI-TextOverlay)
+
 **Originally inspired by:** [mikkel/ComfyUI-text-overlay](https://github.com/mikkel/ComfyUI-text-overlay)
 
 ---
-
 
 ![Advanced Text Overlay Screenshot](https://github.com/scofano/ComfyUI-Advanced-TextOverlay/blob/main/animated.gif)
 
