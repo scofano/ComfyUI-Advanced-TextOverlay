@@ -6,8 +6,6 @@
 
 **Originally inspired by:** [mikkel/ComfyUI-text-overlay](https://github.com/mikkel/ComfyUI-text-overlay)
 
-![Advanced Text Overlay Screenshot](animated.gif)
-
 This module provides the **most feature‑rich and precise text overlay system available for ComfyUI**, including:
 
 * Completely re‑engineered layout engine
@@ -18,7 +16,6 @@ This module provides the **most feature‑rich and precise text overlay system a
 * Batch-aware rendering with smart caching
 * Full video processing node with audio‑preserving re‑mux
 
----
 
 ## ✨ Key Features
 
