@@ -1,168 +1,193 @@
 # 🖋️ ComfyUI Advanced Text Overlay
 
 **Repository:** [scofano/ComfyUI-Advanced-TextOverlay](https://github.com/scofano/ComfyUI-Advanced-TextOverlay)
-
 **Forked from:** [munkyfoot/ComfyUI-TextOverlay](https://github.com/munkyfoot/ComfyUI-TextOverlay)
-
 **Originally inspired by:** [mikkel/ComfyUI-text-overlay](https://github.com/mikkel/ComfyUI-text-overlay)
 
-This node extends and refines the classic ComfyUI Text Overlay concept with a **re-engineered rendering engine**, **precise alignment logic**, **new customization parameters**, and **enhanced batch handling** — making it the most advanced text overlay solution available for ComfyUI.
-
-
 ---
+
+
 ![Advanced Text Overlay Screenshot](https://github.com/scofano/ComfyUI-Advanced-TextOverlay/blob/main/animated.gif)
 
-## ✨ Key Improvements & New Features
+This module provides the **most feature‑rich and precise text overlay system available for ComfyUI**, including:
 
-### 🧱 1. Rebuilt Rendering Engine
-
-* Fully restructured text rendering logic for higher precision and cleaner anti-aliasing.
-* Pixel-accurate bounding box calculations ensure text aligns perfectly to the intended position.
-* Consistent stroke behavior across font sizes with improved blending and color stability.
-
-### 🎨 2. Extended Styling and Layout Control
-
-* **Line spacing**, **letter spacing** and **padding** parameters for advanced multi-line composition.
-* **Independent X/Y shifting** for fine-tuned manual positioning.
-* **Full hex color control** for both text fill and stroke.
-* Supports transparent overlays for non-destructive compositing.
-
-### 🧭 3. Smarter Alignment and Positioning
-
-* Expanded support for:
-
-  * Horizontal alignment: `left`, `center`, `right`
-  * Vertical alignment: `top`, `middle`, `bottom`
-* Reliable anchor-based alignment even on varying resolutions and batch images.
-
-### 🔠 4. Font Management
-
-* Custom fonts can be loaded directly from the repo’s `/fonts` directory.
-* Supports both `.ttf` and `.otf` formats.
-* Graceful fallback to a system font if a specified font is unavailable.
-
-### 🎞️ 5. New Animation Feature
-
-* The node now supports smooth text animations via the new animations.py module.
-* Each animation type manipulates opacity and/or position offsets frame-by-frame.
-
-Supported Animation Types:
-| Animation Kind       | Description                                               |
-| -------------------- | --------------------------------------------------------- |
-| **fade_in**          | Gradually increases opacity from 0 → target.              |
-| **fade_out**         | Gradually decreases opacity from target → 0.              |
-| **move_from_top**    | Moves text upward from off-screen top into position.      |
-| **move_from_bottom** | Moves text downward from off-screen bottom into position. |
-| **move_from_left**   | Moves text from left edge into position.                  |
-| **move_from_right**  | Moves text from right edge into position.                 |
-
-Easing Modes:
-| Easing          | Behavior                              |
-| --------------- | ------------------------------------- |
-| **linear**      | Uniform speed.                        |
-| **ease_in**     | Starts slow, speeds up.               |
-| **ease_out**    | Starts fast, slows down.              |
-| **ease_in_out** | Smooth acceleration and deceleration. |
-
-Animation Parameters
-| Parameter                    | Type    | Description                                                 |
-| ---------------------------- | ------- | ----------------------------------------------------------- |
-| **animate**                  | Boolean | Enable or disable animation.                                |
-| **animation_kind**           | Enum    | Selects animation type (`fade_in`, `move_from_left`, etc.). |
-| **animation_frames**         | Integer | Number of frames to complete the animation.                 |
-| **animation_ease**           | Enum    | Easing curve for smooth motion.                             |
-| **animation_opacity_target** | Float   | Target opacity multiplier for animation.                    |
-
-Behavior:
-
-* For single images, the node outputs either one static frame or an animated sequence.
-
-* For batches/videos, animation applies over the first animation_frames frames, then holds the final pose.
-
-Technical Summary:
-
-The animation module provides:
-
-* progress(t, T_minus1, ease): easing interpolation over frames.
-
-* compute_opacity(kind, p, target): calculates alpha fade transitions.
-
-* compute_offsets(kind, p, img_w, img_h): determines X/Y displacement for move animations.
-
-These functions are integrated directly into the node’s rendering loop for seamless animated overlays
-
-### ⚙️ 6. Batch and Workflow Enhancements
-
-* Native **batch support** — automatically applies consistent overlay logic across all input images.
-* Optimized performance and memory use when processing large image sets.
-* Node parameters persist and preview correctly in ComfyUI sessions.
-
-### 🧩 7. Developer & Extensibility Features
-
-* Modularized code for easier maintenance and feature additions.
-* Clean separation between text layout and rendering logic.
-* Ready for further extensions such as shadow layers, gradient text, or dynamic variable injection.
+* Completely re‑engineered layout engine
+* Pixel‑perfect multiline stroke alignment
+* Opacity‑aware backgrounds and shadows
+* Letter/line spacing, padding, and alignment controls
+* Full animation engine (fade + directional movement)
+* Batch-aware rendering with smart caching
+* Full video processing node with audio‑preserving re‑mux
 
 ---
 
-## ⚙️ Installation
+## ✨ Key Features
 
-To install the **Advanced Text Overlay** node:
+### ✔️ 1. Rebuilt Rendering Engine
 
-1. Locate your ComfyUI `custom_nodes` directory.
-   Typically found at:
+* Accurate bounding boxes for multiline text
+* Consistent stroke widths (even‑pixel enforcement)
+* Crisp, stable text edges with alpha‑aware compositing
 
-   ```
-   ComfyUI/custom_nodes/
-   ```
-2. Clone this repository into that directory:
+### ✔️ 2. Advanced Layout and Typography
 
-   ```bash
-   git clone https://github.com/scofano/ComfyUI-Advanced-TextOverlay
-   ```
-3. Restart ComfyUI.
-   The node will appear under the **`image/text`** category as **“Advanced Text Overlay”**.
+* **Letter spacing** and **line spacing**
+* **Padding** around the text block
+* Horizontal and vertical alignment: `left` / `center` / `right`, `top` / `middle` / `bottom`
+* **Per‑axis offset** (`x_shift`, `y_shift`)
+* Automatic multiline wrapping based on image width
+
+### ✔️ 3. Styling Options
+
+* Fill + alpha
+* Stroke + alpha
+* Shadow + alpha + offset
+* Rounded background box with padding, color, radius, and alpha
+
+### ✔️ 4. Animation System
+
+Supports:
+
+* `fade_in`
+* `fade_out`
+* `move_from_top`
+* `move_from_bottom`
+* `move_from_left`
+* `move_from_right`
+
+With easing:
+
+* `linear`
+* `ease_in`
+* `ease_out`
+* `ease_in_out`
+
+Animation Parameters:
+
+* `animation_frames`
+* `animation_opacity_target`
+* `pause_frames_before_start`
+
+### ✔️ 5. Batch-Smart Processing
+
+* Automatically caches layout on first frame
+* Maintains perfect consistency across all frames
+* For animated batches: animates through first *N* frames, then holds the final pose
+
+### ✔️ 6. Full Video Support
+
+The **Advanced Text Overlay – Video** node:
+
+* Reads a video frame‑by‑frame
+* Applies the same overlay logic
+* Writes a new MP4
+* **Automatically re‑injects the original audio track with ffmpeg**
+* Optional `delete_original` flag
+
+---
+
+## 📥 Installation
+
+Clone the repository inside your ComfyUI `custom_nodes` directory:
+
+```bash
+git clone https://github.com/scofano/ComfyUI-Advanced-TextOverlay
+```
+
+Restart ComfyUI — the nodes will appear under **Advanced Text Overlay**.
 
 ---
 
 ## 🚀 Usage
 
-1. Add the **Advanced Text Overlay** node to your ComfyUI workflow.
-2. Connect your image source to the node’s **image input**.
-3. Configure text and style parameters:
+### **Image Node: `Advanced Text Overlay`**
 
-   * Text content
-   * Font and size
-   * Fill and stroke colors
-   * Alignment, spacing, and offset adjustments
-4. Connect the node’s output to your desired destination (e.g., preview, save image).
+Connect an image or batch → configure text parameters → render.
+
+### **Video Node: `Advanced Text Overlay – Video`**
+
+Provide a path to a video → configure overlay → output is written to ComfyUI's output directory.
 
 ---
 
 ## 🔧 Input Parameters
 
-| Parameter                | Type          | Description                                                                   |
-| ------------------------ | ------------- | ----------------------------------------------------------------------------- |
-| **image**                | Image / Batch | Input image(s) to overlay text onto.                                          |
-| **text**                 | String        | The text content to render on the image. Supports multi-line text.            |
-| **font**                 | String        | Font name or filename (e.g., `arial.ttf`). Looks in `/fonts` or system fonts. |
-| **font_size**            | Integer       | Size of the text in pixels.                                                   |
-| **fill_color_hex**       | String        | Text fill color in hex format (e.g., `#FFFFFF`).                              |
-| **stroke_color_hex**     | String        | Stroke (outline) color in hex format (e.g., `#000000`).                       |
-| **stroke_thickness**     | Float         | Thickness of the text outline.                                                |
-| **padding**              | Integer       | Additional space around the text block. Useful for multi-line layouts.        |
-| **horizontal_alignment** | Enum          | `left`, `center`, or `right` horizontal alignment.                            |
-| **vertical_alignment**   | Enum          | `top`, `middle`, or `bottom` vertical alignment.                              |
-| **x_shift**              | Integer       | Horizontal offset adjustment (pixels).                                        |
-| **y_shift**              | Integer       | Vertical offset adjustment (pixels).                                          |
-| **line_spacing**         | Float         | Vertical spacing between lines of text.                                       |
-| **letter_spacing**       | Float         | Horizontal spacing between letters.                                           |
+### Text & Typography
+
+| Parameter        | Description                               |
+| ---------------- | ----------------------------------------- |
+| `text`           | Text to draw; supports multiline `\n`     |
+| `all_caps`       | Force uppercase                           |
+| `font`           | Font name or file; auto-searches `/fonts` |
+| `font_size`      | Pixel size                                |
+| `letter_spacing` | Per-character spacing                     |
+| `line_spacing`   | Spacing between lines                     |
+
+### Color & Stroke
+
+| Parameter          | Description                              |
+| ------------------ | ---------------------------------------- |
+| `fill_color_hex`   | Hex fill color                           |
+| `fill_alpha`       | Opacity 0–1                              |
+| `stroke_enable`    | Toggle outline                           |
+| `stroke_color_hex` | Hex outline color                        |
+| `stroke_alpha`     | Outline opacity                          |
+| `stroke_thickness` | Relative thickness (scaled by font size) |
+
+### Layout & Position
+
+| Parameter              | Description                 |
+| ---------------------- | --------------------------- |
+| `padding`              | Padding around text block   |
+| `horizontal_alignment` | `left` / `center` / `right` |
+| `vertical_alignment`   | `top` / `middle` / `bottom` |
+| `x_shift`, `y_shift`   | Pixel offsets               |
+
+### Background Box
+
+| Parameter      | Description               |
+| -------------- | ------------------------- |
+| `bg_enable`    | Toggle background box     |
+| `bg_padding`   | Padding around text block |
+| `bg_radius`    | Rounded corner radius     |
+| `bg_color_hex` | Hex color                 |
+| `bg_alpha`     | Opacity                   |
+
+### Shadow
+
+| Parameter          | Description   |
+| ------------------ | ------------- |
+| `shadow_enable`    | Toggle shadow |
+| `shadow_distance`  | Pixel offset  |
+| `shadow_color_hex` | Shadow color  |
+| `shadow_alpha`     | Opacity       |
+
+### Animation
+
+| Parameter                   | Description                     |
+| --------------------------- | ------------------------------- |
+| `animate`                   | Enable animation                |
+| `animation_kind`            | Fade or movement animation      |
+| `animation_frames`          | How many frames animation lasts |
+| `animation_opacity_target`  | Target alpha                    |
+| `animation_ease`            | Easing curve                    |
+| `pause_frames_before_start` | Delay before animation begins   |
+
+### Video-Specific Parameters
+
+| Parameter                    | Description                          |
+| ---------------------------- | ------------------------------------ |
+| `video_path`                 | Input video                          |
+| `filename_prefix`            | Naming prefix for output             |
+| `delete_original`            | Remove input after processing        |
+| `pause_seconds_before_start` | Pause duration (converted to frames) |
 
 ---
 
-## 🖼️ Output
+## 🧪 Output
 
-The node outputs the modified image (or batch of images) with the specified text overlay applied according to the given configuration.
+* Image node → modified image/batch
+* Video node → MP4 written to ComfyUI output directory, with audio preserved
 
 ---
 
