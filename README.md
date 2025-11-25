@@ -8,7 +8,7 @@
 
 ---
 
-![Advanced Text Overlay Screenshot](https://github.com/scofano/ComfyUI-Advanced-TextOverlay/blob/main/animated.gif?raw=1)
+![Advanced Text Overlay Screenshot](animated.gif)
 
 ---
 
