@@ -6,7 +6,7 @@
 
 **Originally inspired by:** [mikkel/ComfyUI-text-overlay](https://github.com/mikkel/ComfyUI-text-overlay)
 
-![Advanced Text Overlay Screenshot](https://raw.githubusercontent.com/scofano/ComfyUI-Advanced-TextOverlay/main/animated.gif)
+![Advanced Text Overlay Screenshot](./animated.gif)
 
 This module provides the **most feature‑rich and precise text overlay system available for ComfyUI**, including:
 
