@@ -2,7 +2,7 @@ import os
 import subprocess
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont, ImageChops
+from PIL import Image, ImageDraw, ImageFont
 
 import imageio.v2 as imageio
 
@@ -91,6 +91,9 @@ class TextOverlay:
                 "animation_frames": ("INT", {"default": 32, "min": 1, "max": 1000, "step": 1}),
                 "animation_ease": (["linear","ease_in","ease_out","ease_in_out"], {"default": "ease_in_out"}),
                 "animation_opacity_target": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "display": "slider"}),
+
+                # how long to wait before starting overlay (frames for this node, seconds for the Video node)
+                "pause_frames_before_start": ("INT", {"default": 0, "min": 0, "max": 100000, "step": 1}),
             }
         }
 
@@ -384,7 +387,8 @@ class TextOverlay:
         animation_kind='fade_in',
         animation_frames=24,
         animation_ease='ease_out',
-        animation_opacity_target=1.0
+        animation_opacity_target=1.0,
+        pause_frames_before_start=0,
     ):
         """
         Single image (H,W,C):
@@ -393,9 +397,15 @@ class TextOverlay:
 
         Batch (B,H,W,C) video:
           - animate=False  -> draw per-frame with no animation changes
-          - animate=True   -> animation starts at frame 0 and completes at frame `animation_frames-1`.
-                              From then on, the final pose is held until frame B-1.
+          - animate=True   -> animation starts after `pause_before_start` frames,
+                              then runs for up to `animation_frames` frames.
+                              Frames after that hold the final pose.
+
+        NOTE: This node has no FPS info; here `pause_before_start` is effectively
+        in frames (not seconds). For 30fps video and a 1s pause, use 30.
         """
+
+        pause_frames = max(0, int(pause_frames_before_start))
 
         # Single image (H, W, C)
         if len(image.shape) == 3:
@@ -403,6 +413,7 @@ class TextOverlay:
             pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
 
             if not animate:
+                # No timeline here → pause_before_start is ignored
                 out_img = self.draw_text(
                     pil_img, text, all_caps,
                     font_size, letter_spacing, font,
@@ -421,7 +432,7 @@ class TextOverlay:
             T = max(1, int(animation_frames))
             outs = []
 
-            # Prime layout cache
+            # Prime layout cache (fills self._cached)
             _ = self.draw_text(
                 pil_img, text, all_caps,
                 font_size, letter_spacing, font,
@@ -437,25 +448,34 @@ class TextOverlay:
             use_cache = True
 
             for t_idx in range(T):
-                p = animations.progress(t_idx, max(1, T - 1), animation_ease)
-                op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
-                dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+                if t_idx < pause_frames:
+                    # Before the pause ends: no text overlay at all
+                    out_img = pil_img.copy()
+                else:
+                    active_frames = max(1, T - pause_frames)
+                    local_idx = t_idx - pause_frames
+                    eff_local = min(local_idx, active_frames - 1)
 
-                out_img = self.draw_text(
-                    pil_img, text, all_caps,
-                    font_size, letter_spacing, font,
-                    fill_color_hex, fill_alpha,
-                    stroke_enable,
-                    stroke_color_hex, stroke_alpha, stroke_thickness,
-                    padding, horizontal_alignment, vertical_alignment,
-                    x_shift, y_shift, line_spacing,
-                    bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
-                    use_cache=use_cache,
-                    opacity_scale=op,
-                    dx=dx,
-                    dy=dy,
-                )
+                    p = animations.progress(eff_local, max(1, active_frames - 1), animation_ease)
+                    op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                    dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+
+                    out_img = self.draw_text(
+                        pil_img, text, all_caps,
+                        font_size, letter_spacing, font,
+                        fill_color_hex, fill_alpha,
+                        stroke_enable,
+                        stroke_color_hex, stroke_alpha, stroke_thickness,
+                        padding, horizontal_alignment, vertical_alignment,
+                        x_shift, y_shift, line_spacing,
+                        bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                        shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                        use_cache=use_cache,
+                        opacity_scale=op,
+                        dx=dx,
+                        dy=dy,
+                    )
+
                 outs.append(np.array(out_img).astype(np.float32) / 255.0)
 
             return (torch.tensor(np.stack(outs)),)
@@ -466,27 +486,35 @@ class TextOverlay:
 
         B, H, W, C = image.shape
 
+        # Non-animated batch
         if not animate:
             out_list = []
             for i in range(B):
                 np_img = image[i].cpu().numpy()
                 pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
-                out_img = self.draw_text(
-                    pil_img, text, all_caps,
-                    font_size, letter_spacing, font,
-                    fill_color_hex, fill_alpha,
-                    stroke_enable,
-                    stroke_color_hex, stroke_alpha, stroke_thickness,
-                    padding, horizontal_alignment, vertical_alignment,
-                    x_shift, y_shift, line_spacing,
-                    bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
-                    use_cache=False,
-                )
+
+                if i < pause_frames:
+                    # Pass-through until pause is over
+                    out_img = pil_img
+                else:
+                    out_img = self.draw_text(
+                        pil_img, text, all_caps,
+                        font_size, letter_spacing, font,
+                        fill_color_hex, fill_alpha,
+                        stroke_enable,
+                        stroke_color_hex, stroke_alpha, stroke_thickness,
+                        padding, horizontal_alignment, vertical_alignment,
+                        x_shift, y_shift, line_spacing,
+                        bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                        shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                        use_cache=False,
+                    )
+
                 out_list.append(np.array(out_img).astype(np.float32) / 255.0)
             return (torch.tensor(np.stack(out_list)),)
 
-        # Animated batch: animate on frames [0 .. T-1], then hold on frames [T .. B-1]
+        # Animated batch: animate on frames [pause_frames .. pause_frames+T-1],
+        # then hold on frames after that
         T = max(1, int(animation_frames))
 
         # Prime cache once using first frame
@@ -511,26 +539,33 @@ class TextOverlay:
             np_img = image[i].cpu().numpy()
             pil_img = Image.fromarray((np_img * 255).astype(np.uint8))
 
-            eff_t = min(i, T - 1)  # frames beyond T-1 hold the last pose
-            p = animations.progress(eff_t, max(1, T - 1), animation_ease)
-            op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
-            dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+            if i < pause_frames:
+                # No overlay yet
+                out_img = pil_img
+            else:
+                eff_idx = i - pause_frames
+                eff_t = min(eff_idx, T - 1)  # frames beyond animation hold the last pose
 
-            out_img = self.draw_text(
-                pil_img, text, all_caps,
-                font_size, letter_spacing, font,
-                fill_color_hex, fill_alpha,
-                stroke_enable,
-                stroke_color_hex, stroke_alpha, stroke_thickness,
-                padding, horizontal_alignment, vertical_alignment,
-                x_shift, y_shift, line_spacing,
-                bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
-                shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
-                use_cache=use_cache,
-                opacity_scale=op,
-                dx=dx,
-                dy=dy,
-            )
+                p = animations.progress(eff_t, max(1, T - 1), animation_ease)
+                op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+
+                out_img = self.draw_text(
+                    pil_img, text, all_caps,
+                    font_size, letter_spacing, font,
+                    fill_color_hex, fill_alpha,
+                    stroke_enable,
+                    stroke_color_hex, stroke_alpha, stroke_thickness,
+                    padding, horizontal_alignment, vertical_alignment,
+                    x_shift, y_shift, line_spacing,
+                    bg_enable, bg_color_hex, bg_alpha, bg_padding, bg_radius,
+                    shadow_enable, shadow_color_hex, shadow_alpha, shadow_distance, font_alignment,
+                    use_cache=use_cache,
+                    opacity_scale=op,
+                    dx=dx,
+                    dy=dy,
+                )
+
             out_list.append(np.array(out_img).astype(np.float32) / 255.0)
 
         return (torch.tensor(np.stack(out_list)),)
@@ -553,25 +588,21 @@ class TextOverlayVideo:
 
     @classmethod
     def INPUT_TYPES(cls):
-        """
-        Mirrors TextOverlay.INPUT_TYPES but replaces `image` with `video_path`
-        and adds `filename_prefix`.
-        """
         base = TextOverlay.INPUT_TYPES()["required"].copy()
-        # Remove image, we don't take an IMAGE tensor here
         base.pop("image")
 
+        # 🔧 rename the pause key for the video node
+        base["pause_seconds_before_start"] = base.pop("pause_frames_before_start")
+
         required = {
-            # video path instead of tensor
             "video_path": ("STRING", {"multiline": False, "default": ""}),
-            # filename prefix for the output in ComfyUI's output dir
             "filename_prefix": ("STRING", {"default": "TxtOver"}),
-            # NEW: delete original input video after processing
             "delete_original": ("BOOLEAN", {"default": False}),
         }
         required.update(base)
 
         return {"required": required}
+
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("video_path",)
@@ -613,16 +644,16 @@ class TextOverlayVideo:
     font_alignment,
     fill_color_hex,
     fill_alpha,
-    stroke_enable,
-    stroke_color_hex,
-    stroke_thickness,
-    stroke_alpha,
     padding,
     vertical_alignment,
     y_shift,
     horizontal_alignment,
     x_shift,
     line_spacing,
+    stroke_enable,
+    stroke_color_hex,
+    stroke_thickness,
+    stroke_alpha,
     bg_enable,
     bg_padding,
     bg_radius,
@@ -637,6 +668,7 @@ class TextOverlayVideo:
     animation_frames,
     animation_ease,
     animation_opacity_target,
+    pause_seconds_before_start,
 ):
 
         """
@@ -667,6 +699,12 @@ class TextOverlayVideo:
         # Try to get a sane total frame count
         nframes_meta = meta.get("nframes", None)
         duration = meta.get("duration", None)  # seconds, if available
+        
+        # Convert pause_seconds_before_start (seconds) to frames
+        try:
+            pause_frames = max(0, int(round(float(pause_seconds_before_start) * float(fps))))
+        except Exception:
+            pause_frames = max(0, int(pause_seconds_before_start))
 
         total_frames = None
 
@@ -701,58 +739,65 @@ class TextOverlayVideo:
             for i, frame in enumerate(frame_iter):
                 pil_img = Image.fromarray(frame)
 
-                # Animation timing: animate on frames [0 .. T-1], then hold last pose
-                if animate:
-                    eff_t = min(i, T - 1)
-                    p = animations.progress(eff_t, max(1, T - 1), animation_ease)
-                    op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
-                    dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+                if i < pause_frames:
+                    # Before pause: pass the frame through with no overlay
+                    out_img = pil_img
                 else:
-                    op = 1.0
-                    dx = dy = 0
+                    if animate:
+                        # Animation timing: animate on frames [pause_frames .. pause_frames+T-1],
+                        # then hold last pose afterwards
+                        eff_idx = i - pause_frames
+                        eff_t = min(eff_idx, T - 1)
+                        p = animations.progress(eff_t, max(1, T - 1), animation_ease)
+                        op = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                        dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
+                    else:
+                        op = 1.0
+                        dx = dy = 0
 
-                use_cache = (i > 0)
+                    use_cache = (i > pause_frames)
 
-                out_img = overlay.draw_text(
-                    pil_img,
-                    text,
-                    all_caps,
-                    font_size,
-                    letter_spacing,
-                    font,
-                    fill_color_hex,
-                    fill_alpha,
-                    stroke_enable,
-                    stroke_color_hex,
-                    stroke_alpha,
-                    stroke_thickness,
-                    padding,
-                    horizontal_alignment,
-                    vertical_alignment,
-                    x_shift,
-                    y_shift,
-                    line_spacing,
-                    bg_enable,
-                    bg_color_hex,
-                    bg_alpha,
-                    bg_padding,
-                    bg_radius,
-                    shadow_enable,
-                    shadow_color_hex,
-                    shadow_alpha,
-                    shadow_distance,
-                    font_alignment,
-                    use_cache=use_cache,
-                    opacity_scale=op,
-                    dx=dx,
-                    dy=dy,
-                )
+                    out_img = overlay.draw_text(
+                        pil_img,
+                        text,
+                        all_caps,
+                        font_size,
+                        letter_spacing,
+                        font,
+                        fill_color_hex,
+                        fill_alpha,
+                        stroke_enable,
+                        stroke_color_hex,
+                        stroke_alpha,
+                        stroke_thickness,
+                        padding,
+                        horizontal_alignment,
+                        vertical_alignment,
+                        x_shift,
+                        y_shift,
+                        line_spacing,
+                        bg_enable,
+                        bg_color_hex,
+                        bg_alpha,
+                        bg_padding,
+                        bg_radius,
+                        shadow_enable,
+                        shadow_color_hex,
+                        shadow_alpha,
+                        shadow_distance,
+                        font_alignment,
+                        use_cache=use_cache,
+                        opacity_scale=op,
+                        dx=dx,
+                        dy=dy,
+                    )
 
                 writer.append_data(np.array(out_img))
 
                 # Update ComfyUI progress
                 if comfy_pbar is not None:
                     comfy_pbar.update(1)
+
 
         finally:
             writer.close()
@@ -797,8 +842,6 @@ class TextOverlayVideo:
             # Fail gracefully: overlay still works, just no audio
             print(f"[TextOverlayVideo] Could not mux audio from original video: {e}")
         
-        # Return STRING so it can be wired or ignored; node still runs even if not connected
-
         # NEW: optionally delete the original input video after processing is finished
         if delete_original:
             try:
@@ -806,10 +849,6 @@ class TextOverlayVideo:
             except Exception as e:
                 print(f"[TextOverlayVideo] Failed to delete original video '{video_path}': {e}")
 
-        return (out_path,)
-
-        
-        # Return STRING so it can be wired or ignored; node still runs even if not connected
         return (out_path,)
 
 NODE_CLASS_MAPPINGS = {
