@@ -20,6 +20,7 @@ except Exception:
 
 # Relative import so it works as a package module in ComfyUI
 from . import animations
+from .font_utils import get_available_fonts, get_font_path
 
 class TextOverlay:
     """
@@ -48,7 +49,7 @@ class TextOverlay:
                 "all_caps": ("BOOLEAN", {"default": False}),
 
                 # font, font-size, font color, font alpha
-                "font": ("STRING", {"default": "ariblk.ttf"}),
+                "font": (get_available_fonts(), {"default": get_available_fonts()[0] if get_available_fonts() else "Arial"}),
                 "font_size": ("INT", {"default": 32, "min": 1, "max": 9999, "step": 1}),
                 "letter_spacing": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 50.0, "step": 0.5}),
                 "font_alignment": (cls._horizontal_alignments, {"default": "center"}),
@@ -113,10 +114,15 @@ class TextOverlay:
         return text.replace("\\n", "\n").replace("\\N", "\n")
 
     def _load_font(self, font, font_size):
+        # First try to resolve the font name to a path using our font utils
+        font_path = get_font_path(font)
+        
+        # Then try the local fonts directory as fallback
         fonts_dir = os.path.join(os.path.dirname(__file__), "fonts")
-        font_path = os.path.join(fonts_dir, font)
-        if not os.path.exists(font_path):
-            font_path = font
+        local_font_path = os.path.join(fonts_dir, font)
+        if not os.path.exists(font_path) and os.path.exists(local_font_path):
+            font_path = local_font_path
+        
         try:
             return ImageFont.truetype(font_path, font_size)
         except Exception as e:

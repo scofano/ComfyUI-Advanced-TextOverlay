@@ -15,6 +15,11 @@ This module provides the **most feature‑rich and precise text overlay system a
 * Full animation engine (fade + directional movement)
 * Batch-aware rendering with smart caching
 * Full video processing node with audio‑preserving re‑mux
+* **NEW: Font dropdown with system font discovery**
+  - Automatically detects installed fonts on Windows, macOS, and Linux
+  - Cross-platform font scanning
+  - Fallback to common font names for compatibility
+  - Reusable font system for future nodes
 
 
 ## ✨ Key Features
@@ -91,6 +96,44 @@ git clone https://github.com/scofano/ComfyUI-Advanced-TextOverlay
 ```
 
 Restart ComfyUI — the nodes will appear under **Advanced Text Overlay**.
+
+## 🎨 Font Selection
+
+The node now includes a dropdown menu that automatically populates with fonts installed on your system:
+
+- **Windows**: Scans `C:\Windows\Fonts\`
+- **macOS**: Scans `/System/Library/Fonts/`, `/Library/Fonts/`, and `~/Library/Fonts/`
+- **Linux**: Scans `/usr/share/fonts/`, `/usr/local/share/fonts/`, `~/.fonts/`, and `~/.local/share/fonts/`
+
+If no system fonts are detected, the node falls back to common web-safe fonts like Arial, Times New Roman, etc.
+
+### Using the Font Dropdown
+
+1. Select your desired font from the dropdown menu
+2. The node will automatically resolve the font name to the correct file path
+3. Text will be rendered using the selected font
+4. Works with both the image and video overlay nodes
+
+### For Developers
+
+The font system is modular and can be reused in other ComfyUI nodes:
+
+```python
+from .font_utils import get_available_fonts, get_font_path
+
+class MyTextNode:
+    @classmethod
+    def INPUT_TYPES(cls):
+        fonts = get_available_fonts()
+        return {
+            "required": {
+                "font": (fonts, {"default": fonts[0] if fonts else "Arial"}),
+                # ... other inputs
+            }
+        }
+```
+
+This provides a consistent font selection experience across all your nodes.
 
 ---
 
