@@ -58,6 +58,8 @@ Supported tags:
 * `<br>` for line breaks
 * `<span color="#FF0000">red text</span>`
 * `<span bg="#000000">highlighted text</span>`
+* `<span align="center">centered line block</span>`
+* `<div align="right">right-aligned line block</div>`
 * `<span style="color:#00FF00; background-color:#222222">combined styling</span>`
 
 Supported attributes on `<span>`:
@@ -70,6 +72,7 @@ Supported attributes on `<span>`:
 | `bg`      | Per-segment highlight/background color |
 | `background` | Alias for background color |
 | `background-color` | Alias for background color |
+| `align`   | Overrides line alignment for that styled portion (`left`, `center`, `right`) |
 | `style`   | Inline CSS-like support for `color` and `background-color` |
 
 Examples:
@@ -85,6 +88,7 @@ Notes:
 * Plain text still works exactly as before.
 * Bold and italic use best-effort font variant matching. If the selected font has no matching variant, the regular font is used.
 * Inline background highlights use the node's `bg_alpha` / `bg_radius` settings for opacity and rounding.
+* Inline alignment overrides the node's `font_alignment` for the wrapped portion only.
 * Invalid inline colors fall back to the node's normal `fill_color_hex` or `bg_color_hex` values.
 * Unsupported HTML tags are ignored for styling; their text content still renders.
 
@@ -128,6 +132,20 @@ Normal text with <span bg="#6b1d1d">highlighted words</span> in the middle.
 Title: <b>Episode 01</b><br>
 <span color="#cccccc">Subtitle line</span><br>
 <span color="#ffffff" bg="#7a0018">Now Playing</span>
+```
+
+#### Alignment override inside a left-aligned node
+
+```html
+Intro line<br>
+<span align="center"><b>Centered title</b></span><br>
+Ending line
+```
+
+#### Right-aligned callout block
+
+```html
+<div align="right"><span bg="#222222" color="#ffffff">Right callout</span></div>
 ```
 
 ### ✔️ 6. Animation System
@@ -241,6 +259,12 @@ or rich text:
 Hello <b>world</b><br><span color="#00d0ff">Second line</span>
 ```
 
+You can also override line alignment for just part of the content:
+
+```html
+<span align="center">Centered line</span>
+```
+
 ### **Video Node: `Advanced Text Overlay – Video`**
 
 Provide a path to a video → configure overlay → output is written to ComfyUI's output directory.
@@ -269,6 +293,8 @@ Provide a path to a video → configure overlay → output is written to ComfyUI
 | `<br>` | Line break |
 | `<span color="#RRGGBB">Text</span>` | Changes text color for that segment |
 | `<span bg="#RRGGBB">Text</span>` | Draws a background highlight behind that segment |
+| `<span align="center">Text</span>` | Centers the wrapped portion regardless of the node's `font_alignment` |
+| `<div align="right">Text</div>` | Right-aligns the wrapped portion regardless of the node's `font_alignment` |
 | `<span style="color:#fff; background-color:#000">Text</span>` | Combined inline styling |
 
 ### Rich Text Examples
@@ -290,11 +316,18 @@ Normal <b>bold</b> <i>italic</i>
 <span style="color:#ffffff; background-color:#333333">subtitle</span>
 ```
 
+```html
+Top line<br>
+<span align="center" color="#ffffff" bg="#444444"><b>Centered mid title</b></span><br>
+Bottom line
+```
+
 ### Rich Text Limitations
 
 * This is **not** a full browser engine and does not support general HTML layout or arbitrary CSS.
 * Supported styling is intentionally limited to inline emphasis, line breaks, text color, and segment background color.
 * Per-segment backgrounds wrap naturally with the text layout; if text wraps, the highlight is drawn for each wrapped fragment.
+* Alignment overrides operate at the wrapped line/block level. If alignment changes mid-text, the renderer starts a new aligned line block for that portion.
 * Whole-block background settings (`bg_enable`, `bg_padding`, `bg_color_hex`, etc.) still apply independently from inline segment highlights.
 
 ### Color & Stroke

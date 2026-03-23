@@ -31,7 +31,20 @@ class InlineRichTextParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.runs = []
-        self._style_stack = [{"bold": False, "italic": False, "fill": None, "bg": None}]
+        self._style_stack = [{"bold": False, "italic": False, "fill": None, "bg": None, "align": None}]
+
+    def _normalize_align(self, value):
+        value = (value or "").strip().lower()
+        mapping = {
+            "left": "left",
+            "start": "left",
+            "center": "center",
+            "centre": "center",
+            "middle": "center",
+            "right": "right",
+            "end": "right",
+        }
+        return mapping.get(value)
 
     def handle_starttag(self, tag, attrs):
         tag = (tag or "").lower()
@@ -47,7 +60,9 @@ class InlineRichTextParser(HTMLParser):
             new_style["bold"] = True
         elif tag == "i":
             new_style["italic"] = True
-        elif tag == "span":
+        elif tag in ("left", "center", "right"):
+            new_style["align"] = self._normalize_align(tag)
+        elif tag in ("span", "div", "p"):
             span_style = self._parse_span_attrs(attrs)
             for key, value in span_style.items():
                 if value is not None:
@@ -70,7 +85,7 @@ class InlineRichTextParser(HTMLParser):
             self.runs.append({"text": data, "style": self._style_stack[-1].copy()})
 
     def _parse_span_attrs(self, attrs):
-        parsed = {"fill": None, "bg": None}
+        parsed = {"fill": None, "bg": None, "align": None}
 
         if attrs.get("color"):
             parsed["fill"] = attrs.get("color")
@@ -83,6 +98,9 @@ class InlineRichTextParser(HTMLParser):
             if attrs.get(key):
                 parsed["bg"] = attrs.get(key)
 
+        if attrs.get("align"):
+            parsed["align"] = self._normalize_align(attrs.get("align"))
+
         style_text = attrs.get("style", "") or ""
         for part in style_text.split(";"):
             if ":" not in part:
@@ -92,6 +110,8 @@ class InlineRichTextParser(HTMLParser):
             value = value.strip()
             if key == "color":
                 parsed["fill"] = value
+            elif key == "text-align":
+                parsed["align"] = self._normalize_align(value)
             elif key in ("background", "background-color"):
                 parsed["bg"] = value
 
@@ -199,6 +219,7 @@ class TextOverlay:
             bool(style.get("italic")),
             style.get("fill"),
             style.get("bg"),
+            style.get("align"),
         )
 
     def _font_signature(self, font_obj):
@@ -234,7 +255,7 @@ class TextOverlay:
     def _parse_rich_text(self, text, all_caps):
         normalized = self._normalize_text(text)
         parser = InlineRichTextParser()
-        default_style = {"bold": False, "italic": False, "fill": None, "bg": None}
+        default_style = {"bold": False, "italic": False, "fill": None, "bg": None, "align": None}
 
         try:
             parser.feed(normalized)
@@ -393,25 +414,40 @@ class TextOverlay:
         tokens = self._tokenize_runs(runs, font_name, font_size)
 
         if not tokens:
-            return [[]]
+            return ([[]], [None])
 
         lines = []
+        line_aligns = []
         current = []
+        current_align = None
         idx = 0
         ended_with_newline = False
         max_width = max(1, int(round(max_width)))
 
         while idx < len(tokens):
             token = tokens[idx]
+            token_align = token.get("style", {}).get("align")
 
             if token.get("newline"):
                 lines.append(self._merge_line_segments(current))
+                line_aligns.append(current_align)
                 current = []
+                current_align = None
                 ended_with_newline = True
                 idx += 1
                 continue
 
             ended_with_newline = False
+
+            if current and token_align != current_align:
+                lines.append(self._merge_line_segments(current))
+                line_aligns.append(current_align)
+                current = []
+                current_align = None
+                continue
+
+            if not current:
+                current_align = token_align
 
             if not current and token.get("text", "").isspace():
                 idx += 1
@@ -425,7 +461,9 @@ class TextOverlay:
                 if head is not None:
                     current.append(head)
                     lines.append(self._merge_line_segments(current))
+                    line_aligns.append(current_align)
                     current = []
+                    current_align = None
                 idx += 1
                 if tail is not None and tail.get("text"):
                     tokens.insert(idx, tail)
@@ -437,15 +475,18 @@ class TextOverlay:
                 continue
 
             lines.append(self._merge_line_segments(current))
+            line_aligns.append(current_align)
             current = []
+            current_align = None
 
             if token.get("text", "").isspace():
                 idx += 1
 
         if current or not lines or ended_with_newline:
             lines.append(self._merge_line_segments(current))
+            line_aligns.append(current_align)
 
-        return lines
+        return lines, line_aligns
 
     # ---------------- core drawing ----------------
 
@@ -460,7 +501,7 @@ class TextOverlay:
 
         if need_recompute:
             default_font = self._load_font(font_name, font_size)
-            lines = self._wrap_styled_lines(draw, text, all_caps, font_name, font_size, img_w - 2 * padding, letter_spacing)
+            lines, line_aligns = self._wrap_styled_lines(draw, text, all_caps, font_name, font_size, img_w - 2 * padding, letter_spacing)
             widths, tops, heights = [], [], []
 
             for line in lines:
@@ -475,6 +516,7 @@ class TextOverlay:
             self._cached = {
                 "key": cache_key,
                 "lines": lines,
+                "line_aligns": line_aligns,
                 "widths": widths,
                 "tops": tops,
                 "heights": heights,
@@ -483,6 +525,7 @@ class TextOverlay:
             }
 
         lines = self._cached["lines"]
+        line_aligns = self._cached["line_aligns"]
         widths = self._cached["widths"]
         tops = self._cached["tops"]
         heights = self._cached["heights"]
@@ -506,7 +549,7 @@ class TextOverlay:
         x0 = int(round(x0 + x_shift))
         visual_top_y = int(round(visual_top_y + y_shift))
 
-        return lines, widths, heights, tops, block_w, block_h, x0, visual_top_y
+        return lines, line_aligns, widths, heights, tops, block_w, block_h, x0, visual_top_y
 
     def draw_text(
         self,
@@ -558,7 +601,7 @@ class TextOverlay:
         if sw % 2 == 1 and sw > 0:
             sw += 1
 
-        (lines, widths, heights, tops, block_w, block_h,
+        (lines, line_aligns, widths, heights, tops, block_w, block_h,
          x0, visual_top_y) = self._compute_layout(
             image.width, image.height, draw, text, all_caps, font, sw,
             padding, horizontal_alignment, vertical_alignment, x_shift, y_shift,
@@ -566,9 +609,10 @@ class TextOverlay:
         )
 
         def _line_offset(i):
-            if font_alignment == "left":
+            line_alignment = line_aligns[i] or font_alignment
+            if line_alignment == "left":
                 return 0
-            elif font_alignment == "center":
+            elif line_alignment == "center":
                 return int(round((block_w - widths[i]) / 2))
             else:
                 return int(round(block_w - widths[i]))
