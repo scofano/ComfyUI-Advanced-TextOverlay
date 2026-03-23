@@ -6,6 +6,7 @@ Provides cross-platform font discovery and management functionality.
 import os
 import sys
 import glob
+import re
 from typing import List, Dict, Optional
 from pathlib import Path
 
@@ -37,6 +38,82 @@ class FontManager:
             self._scan_system_fonts()
         
         return self._name_to_path.get(font_name, font_name)
+
+    def get_font_variant_path(self, font_name: str, bold: bool = False, italic: bool = False) -> str:
+        """
+        Best-effort lookup for bold/italic variants of a selected font.
+
+        If a matching variant cannot be found, returns the regular font path.
+        """
+        if not self._scanned:
+            self._scan_system_fonts()
+
+        base_path = self.get_font_path(font_name)
+        if not bold and not italic:
+            return base_path
+
+        if bold and italic:
+            return (
+                self._find_variant_path(font_name, base_path, bold=True, italic=True)
+                or self._find_variant_path(font_name, base_path, bold=True, italic=False)
+                or self._find_variant_path(font_name, base_path, bold=False, italic=True)
+                or base_path
+            )
+
+        return self._find_variant_path(font_name, base_path, bold=bold, italic=italic) or base_path
+
+    def _normalize_font_name(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+    def _find_variant_path(self, font_name: str, base_path: str, bold: bool = False, italic: bool = False) -> Optional[str]:
+        normalized_targets = []
+
+        if font_name:
+            normalized_targets.append(self._normalize_font_name(font_name))
+
+        if base_path and os.path.exists(base_path):
+            base_stem = Path(base_path).stem
+            normalized_targets.append(self._normalize_font_name(base_stem))
+
+        normalized_targets = [t for t in dict.fromkeys(normalized_targets) if t]
+        if not normalized_targets:
+            return None
+
+        bold_markers = ["bold", "semibold", "demibold", "extrabold", "black", "heavy"]
+        italic_markers = ["italic", "oblique", "slanted", "kursiv"]
+
+        best_match = None
+        best_score = None
+
+        for candidate_name, candidate_path in self._name_to_path.items():
+            normalized_name = self._normalize_font_name(candidate_name)
+            if not normalized_name:
+                continue
+
+            if not any(target in normalized_name or normalized_name in target for target in normalized_targets):
+                continue
+
+            if bold and not any(marker in normalized_name for marker in bold_markers):
+                continue
+            if italic and not any(marker in normalized_name for marker in italic_markers):
+                continue
+
+            score = len(normalized_name)
+            if bold and "bold" in normalized_name:
+                score -= 10
+            if italic and "italic" in normalized_name:
+                score -= 10
+            for target in normalized_targets:
+                if normalized_name == target:
+                    score -= 2
+                elif normalized_name.startswith(target) or target.startswith(normalized_name):
+                    score -= 1
+
+            if best_score is None or score < best_score:
+                best_score = score
+                best_match = candidate_path
+
+        return best_match
     
     def _scan_system_fonts(self) -> None:
         """Platform-specific font discovery."""
@@ -154,3 +231,8 @@ def get_available_fonts() -> List[str]:
 def get_font_path(font_name: str) -> str:
     """Convenience function to get font path from name."""
     return font_manager.get_font_path(font_name)
+
+
+def get_font_variant_path(font_name: str, bold: bool = False, italic: bool = False) -> str:
+    """Convenience function to get a bold/italic font variant path if available."""
+    return font_manager.get_font_variant_path(font_name, bold=bold, italic=italic)

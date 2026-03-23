@@ -1,7 +1,9 @@
 import os
+import re
 import subprocess
 import numpy as np
 import torch
+from html.parser import HTMLParser
 from PIL import Image, ImageDraw, ImageFont
 
 import imageio.v2 as imageio
@@ -20,7 +22,80 @@ except Exception:
 
 # Relative import so it works as a package module in ComfyUI
 from . import animations
-from .font_utils import get_available_fonts, get_font_path
+from .font_utils import get_available_fonts, get_font_variant_path
+
+
+class InlineRichTextParser(HTMLParser):
+    """Parses a small HTML-like subset into styled text runs."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.runs = []
+        self._style_stack = [{"bold": False, "italic": False, "fill": None, "bg": None}]
+
+    def handle_starttag(self, tag, attrs):
+        tag = (tag or "").lower()
+        attrs = dict(attrs or [])
+
+        if tag == "br":
+            self.runs.append({"text": "\n", "style": self._style_stack[-1].copy()})
+            return
+
+        new_style = self._style_stack[-1].copy()
+
+        if tag == "b":
+            new_style["bold"] = True
+        elif tag == "i":
+            new_style["italic"] = True
+        elif tag == "span":
+            span_style = self._parse_span_attrs(attrs)
+            for key, value in span_style.items():
+                if value is not None:
+                    new_style[key] = value
+
+        self._style_stack.append(new_style)
+
+    def handle_startendtag(self, tag, attrs):
+        tag = (tag or "").lower()
+        self.handle_starttag(tag, attrs)
+        if tag != "br" and len(self._style_stack) > 1:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if len(self._style_stack) > 1:
+            self._style_stack.pop()
+
+    def handle_data(self, data):
+        if data:
+            self.runs.append({"text": data, "style": self._style_stack[-1].copy()})
+
+    def _parse_span_attrs(self, attrs):
+        parsed = {"fill": None, "bg": None}
+
+        if attrs.get("color"):
+            parsed["fill"] = attrs.get("color")
+        if attrs.get("fill"):
+            parsed["fill"] = attrs.get("fill")
+        if attrs.get("fg"):
+            parsed["fill"] = attrs.get("fg")
+
+        for key in ("bg", "background", "background-color"):
+            if attrs.get(key):
+                parsed["bg"] = attrs.get(key)
+
+        style_text = attrs.get("style", "") or ""
+        for part in style_text.split(";"):
+            if ":" not in part:
+                continue
+            key, value = part.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key == "color":
+                parsed["fill"] = value
+            elif key in ("background", "background-color"):
+                parsed["bg"] = value
+
+        return parsed
 
 class TextOverlay:
     """
@@ -104,109 +179,315 @@ class TextOverlay:
 
     # ---------------- helpers ----------------
 
-    def hex_to_rgb(self, hex_color: str):
-        hex_color = hex_color.strip().lstrip("#")
-        if len(hex_color) == 3:
-            hex_color = "".join(ch * 2 for ch in hex_color)
-        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    def hex_to_rgb(self, hex_color: str, fallback=(255, 255, 255)):
+        try:
+            hex_color = (hex_color or "").strip().lstrip("#")
+            if len(hex_color) == 3:
+                hex_color = "".join(ch * 2 for ch in hex_color)
+            if len(hex_color) != 6:
+                return fallback
+            return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        except Exception:
+            return fallback
 
     def _normalize_text(self, text: str) -> str:
-        return text.replace("\\n", "\n").replace("\\N", "\n")
+        return (text or "").replace("\\n", "\n").replace("\\N", "\n")
 
-    def _load_font(self, font, font_size):
-        # First try to resolve the font name to a path using our font utils
-        font_path = get_font_path(font)
-        
-        # Then try the local fonts directory as fallback
+    def _style_key(self, style):
+        return (
+            bool(style.get("bold")),
+            bool(style.get("italic")),
+            style.get("fill"),
+            style.get("bg"),
+        )
+
+    def _font_signature(self, font_obj):
+        try:
+            return (font_obj.getname(), getattr(font_obj, "path", None), getattr(font_obj, "size", None))
+        except Exception:
+            return (None, getattr(font_obj, "path", None), getattr(font_obj, "size", None))
+
+    def _load_font(self, font, font_size, bold=False, italic=False):
+        if not hasattr(self, "_font_object_cache"):
+            self._font_object_cache = {}
+
+        cache_key = (font, font_size, bool(bold), bool(italic))
+        if cache_key in self._font_object_cache:
+            return self._font_object_cache[cache_key]
+
+        font_path = get_font_variant_path(font, bold=bold, italic=italic)
+
         fonts_dir = os.path.join(os.path.dirname(__file__), "fonts")
         local_font_path = os.path.join(fonts_dir, font)
         if not os.path.exists(font_path) and os.path.exists(local_font_path):
             font_path = local_font_path
-        
+
         try:
-            return ImageFont.truetype(font_path, font_size)
+            loaded = ImageFont.truetype(font_path, font_size)
         except Exception as e:
             print(f"Error loading font: {e} — using default font")
-            return ImageFont.load_default()
+            loaded = ImageFont.load_default()
 
-    def _wrap_lines(self, draw, text, font, max_width, padding, letter_spacing):
-        import re
-        paragraphs = self._normalize_text(text).split("\n")
-        out_lines = []
-        for para in paragraphs:
-            if para == "":
-                out_lines.append("")
+        self._font_object_cache[cache_key] = loaded
+        return loaded
+
+    def _parse_rich_text(self, text, all_caps):
+        normalized = self._normalize_text(text)
+        parser = InlineRichTextParser()
+        default_style = {"bold": False, "italic": False, "fill": None, "bg": None}
+
+        try:
+            parser.feed(normalized)
+            parser.close()
+            parsed_runs = parser.runs or [{"text": normalized, "style": default_style.copy()}]
+        except Exception:
+            parsed_runs = [{"text": normalized, "style": default_style.copy()}]
+
+        merged_runs = []
+        for run in parsed_runs:
+            chunk = run.get("text", "")
+            if all_caps:
+                chunk = chunk.upper()
+            if chunk == "":
                 continue
-            tokens = re.findall(r"\S+|\s+", para)
-            line = ""
-            for tok in tokens:
-                candidate = line + tok
-                char_count = max(0, len(candidate) - 1)
-                candidate_px = draw.textlength(candidate, font=font) + char_count * letter_spacing
-                if candidate_px <= (max_width - 2 * padding):
-                    line = candidate
-                else:
-                    if line == "":
-                        out_lines.append(candidate)
-                        line = ""
-                    else:
-                        out_lines.append(line)
-                        line = tok.lstrip()
-            out_lines.append(line)
-        return out_lines
+
+            style = run.get("style", default_style).copy()
+            if merged_runs and self._style_key(merged_runs[-1]["style"]) == self._style_key(style):
+                merged_runs[-1]["text"] += chunk
+            else:
+                merged_runs.append({"text": chunk, "style": style})
+
+        return merged_runs
+
+    def _tokenize_runs(self, runs, font_name, font_size):
+        tokens = []
+        for run in runs:
+            style = run["style"].copy()
+            font_obj = self._load_font(
+                font_name,
+                font_size,
+                bold=style.get("bold", False),
+                italic=style.get("italic", False),
+            )
+
+            for part in re.findall(r"\n|[^\S\n]+|\S+", run["text"]):
+                if part == "\n":
+                    tokens.append({"text": "\n", "style": style.copy(), "font": font_obj, "newline": True})
+                elif part:
+                    tokens.append({"text": part, "style": style.copy(), "font": font_obj, "newline": False})
+        return tokens
+
+    def _merge_line_segments(self, tokens):
+        merged = []
+        for token in tokens:
+            if token.get("newline"):
+                continue
+
+            item = {
+                "text": token.get("text", ""),
+                "style": token.get("style", {}).copy(),
+                "font": token.get("font"),
+            }
+            if not item["text"]:
+                continue
+
+            if merged and self._style_key(merged[-1]["style"]) == self._style_key(item["style"]):
+                merged[-1]["text"] += item["text"]
+            else:
+                merged.append(item)
+
+        return merged
+
+    def _measure_text_advance(self, draw, text, font, letter_spacing):
+        if not text:
+            return 0.0
+
+        if not hasattr(self, "_measure_cache"):
+            self._measure_cache = {}
+
+        cache_key = (self._font_signature(font), text, float(letter_spacing))
+        if cache_key in self._measure_cache:
+            return self._measure_cache[cache_key]
+
+        total = 0.0
+        for i, ch in enumerate(text):
+            total += draw.textlength(ch, font=font)
+            if i < len(text) - 1:
+                total += letter_spacing
+
+        self._measure_cache[cache_key] = total
+        return total
+
+    def _measure_line_width(self, draw, segments, letter_spacing):
+        nonempty = [seg for seg in segments if seg.get("text")]
+        if not nonempty:
+            return 0.0
+
+        total = sum(self._measure_text_advance(draw, seg["text"], seg["font"], letter_spacing) for seg in nonempty)
+        if len(nonempty) > 1:
+            total += letter_spacing * (len(nonempty) - 1)
+        return total
+
+    def _compute_line_metrics(self, draw, segments, stroke_width, default_font):
+        if not hasattr(self, "_line_metric_cache"):
+            self._line_metric_cache = {}
+
+        fonts = [seg["font"] for seg in segments if seg.get("font") is not None]
+        if not fonts:
+            fonts = [default_font]
+
+        tops = []
+        bottoms = []
+        seen = set()
+        for font in fonts:
+            sig = (self._font_signature(font), int(stroke_width))
+            if sig in seen:
+                continue
+            seen.add(sig)
+
+            if sig not in self._line_metric_cache:
+                bbox = draw.textbbox((0, 0), "Ag", font=font, stroke_width=stroke_width)
+                self._line_metric_cache[sig] = (bbox[1], bbox[3], bbox[3] - bbox[1])
+
+            top, bottom, height = self._line_metric_cache[sig]
+            tops.append(top)
+            bottoms.append(bottom)
+
+        line_top = min(tops) if tops else 0
+        line_bottom = max(bottoms) if bottoms else 0
+        return line_top, line_bottom, line_bottom - line_top
+
+    def _split_token_to_fit(self, draw, token, max_width, letter_spacing):
+        text = token.get("text", "")
+        if not text:
+            return None, None
+
+        if text.isspace():
+            return None, None
+
+        split_at = 0
+        for i in range(1, len(text) + 1):
+            candidate = text[:i]
+            width = self._measure_text_advance(draw, candidate, token["font"], letter_spacing)
+            if width <= max_width or i == 1:
+                split_at = i
+            else:
+                break
+
+        split_at = max(1, split_at)
+        head_text = text[:split_at]
+        tail_text = text[split_at:]
+
+        head = token.copy()
+        head["text"] = head_text
+
+        tail = None
+        if tail_text:
+            tail = token.copy()
+            tail["text"] = tail_text
+
+        return head, tail
+
+    def _wrap_styled_lines(self, draw, text, all_caps, font_name, font_size, max_width, letter_spacing):
+        runs = self._parse_rich_text(text, all_caps)
+        tokens = self._tokenize_runs(runs, font_name, font_size)
+
+        if not tokens:
+            return [[]]
+
+        lines = []
+        current = []
+        idx = 0
+        ended_with_newline = False
+        max_width = max(1, int(round(max_width)))
+
+        while idx < len(tokens):
+            token = tokens[idx]
+
+            if token.get("newline"):
+                lines.append(self._merge_line_segments(current))
+                current = []
+                ended_with_newline = True
+                idx += 1
+                continue
+
+            ended_with_newline = False
+
+            if not current and token.get("text", "").isspace():
+                idx += 1
+                continue
+
+            candidate = current + [token]
+            candidate_width = self._measure_line_width(draw, self._merge_line_segments(candidate), letter_spacing)
+
+            if not current and candidate_width > max_width:
+                head, tail = self._split_token_to_fit(draw, token, max_width, letter_spacing)
+                if head is not None:
+                    current.append(head)
+                    lines.append(self._merge_line_segments(current))
+                    current = []
+                idx += 1
+                if tail is not None and tail.get("text"):
+                    tokens.insert(idx, tail)
+                continue
+
+            if candidate_width <= max_width or not current:
+                current.append(token)
+                idx += 1
+                continue
+
+            lines.append(self._merge_line_segments(current))
+            current = []
+
+            if token.get("text", "").isspace():
+                idx += 1
+
+        if current or not lines or ended_with_newline:
+            lines.append(self._merge_line_segments(current))
+
+        return lines
 
     # ---------------- core drawing ----------------
 
-    def _compute_layout(self, img_w, img_h, draw, text, font, stroke_width, padding,
+    def _compute_layout(self, img_w, img_h, draw, text, all_caps, font_name, stroke_width, padding,
                         h_align, v_align, x_shift, y_shift, line_spacing, letter_spacing, font_size, use_cache):
-        try:
-            current_font_id = (font.getname(), getattr(font, "path", None))
-        except Exception:
-            current_font_id = (None, None)
+        cache_key = (
+            img_w, img_h, text, bool(all_caps), font_name, int(font_size), int(stroke_width),
+            int(padding), float(line_spacing), float(letter_spacing)
+        )
 
-        need_recompute = True
-        if hasattr(self, "_cached") and self._cached is not None and use_cache:
-            (*_, cached_letter_spacing, cached_stroke_width,
-             cached_text, cached_font_id, cached_font_size, cached_padding, cached_line_spacing) = self._cached
-            if (cached_letter_spacing == letter_spacing and
-                cached_stroke_width   == stroke_width   and
-                cached_text           == text           and
-                cached_font_id        == current_font_id and
-                cached_font_size      == font_size      and
-                cached_padding        == padding        and
-                cached_line_spacing   == line_spacing):
-                need_recompute = False
+        need_recompute = not (hasattr(self, "_cached") and self._cached is not None and use_cache and self._cached.get("key") == cache_key)
 
         if need_recompute:
-            lines = self._wrap_lines(draw, text, font, img_w, padding, letter_spacing)
-            widths, heights, tops = [], [], []
-            lefts, rights_sp = [], []
-            for ln in lines:
-                l, t, r, b = draw.textbbox((0, 0), ln, font=font, stroke_width=stroke_width)
-                w = (r - l)
-                h = (b - t)
-                extra = max(0, len(ln) - 1) * letter_spacing
-                widths.append(w + extra)
-                heights.append(h)
-                tops.append(t)
-                lefts.append(l)
-                rights_sp.append(r + extra)
+            default_font = self._load_font(font_name, font_size)
+            lines = self._wrap_styled_lines(draw, text, all_caps, font_name, font_size, img_w - 2 * padding, letter_spacing)
+            widths, tops, heights = [], [], []
 
-            min_left = min(lefts) if lefts else 0
-            max_right = max(rights_sp) if rights_sp else 0
-            block_w = max_right - min_left if rights_sp else 0
-            block_h = sum(heights) + (len(heights) - 1) * line_spacing if heights else 0
-            min_top = min(tops) if tops else 0
+            for line in lines:
+                widths.append(self._measure_line_width(draw, line, letter_spacing))
+                line_top, _line_bottom, line_height = self._compute_line_metrics(draw, line, stroke_width, default_font)
+                tops.append(line_top)
+                heights.append(line_height)
 
-            self._cached = (
-                lines, widths, heights, tops, min_top, min_left,
-                block_w, block_h,
-                letter_spacing, stroke_width,
-                text, current_font_id, font_size, padding, line_spacing
-            )
+            block_w = max(widths) if widths else 0
+            block_h = (sum(heights) + (len(heights) - 1) * line_spacing) if heights else 0
 
-        (lines, widths, heights, tops, min_top, min_left,
-         block_w, block_h, _cached_letter_spacing, _cached_stroke_width, *_) = self._cached
+            self._cached = {
+                "key": cache_key,
+                "lines": lines,
+                "widths": widths,
+                "tops": tops,
+                "heights": heights,
+                "block_w": block_w,
+                "block_h": block_h,
+            }
+
+        lines = self._cached["lines"]
+        widths = self._cached["widths"]
+        tops = self._cached["tops"]
+        heights = self._cached["heights"]
+        block_w = self._cached["block_w"]
+        block_h = self._cached["block_h"]
 
         if h_align == "left":
             x0 = padding
@@ -225,7 +506,7 @@ class TextOverlay:
         x0 = int(round(x0 + x_shift))
         visual_top_y = int(round(visual_top_y + y_shift))
 
-        return lines, widths, heights, tops, min_top, min_left, block_w, block_h, x0, visual_top_y
+        return lines, widths, heights, tops, block_w, block_h, x0, visual_top_y
 
     def draw_text(
         self,
@@ -267,9 +548,6 @@ class TextOverlay:
         loaded_font = self._load_font(font, font_size)
         draw = ImageDraw.Draw(image, "RGBA")
 
-        if all_caps:
-            text = text.upper()
-
         opacity_scale = max(0.0, min(1.0, float(opacity_scale)))
         fill_alpha = max(0.0, min(1.0, float(fill_alpha) * opacity_scale))
         stroke_alpha = max(0.0, min(1.0, float(stroke_alpha) * opacity_scale))
@@ -280,15 +558,12 @@ class TextOverlay:
         if sw % 2 == 1 and sw > 0:
             sw += 1
 
-        (lines, widths, heights, tops, min_top, min_left, block_w, block_h,
+        (lines, widths, heights, tops, block_w, block_h,
          x0, visual_top_y) = self._compute_layout(
-            image.width, image.height, draw, text, loaded_font, sw,
+            image.width, image.height, draw, text, all_caps, font, sw,
             padding, horizontal_alignment, vertical_alignment, x_shift, y_shift,
             line_spacing, letter_spacing, font_size, use_cache
         )
-
-        first_line_baseline_y = visual_top_y - min_top
-        x_draw = x0 - min_left
 
         def _line_offset(i):
             if font_alignment == "left":
@@ -297,6 +572,38 @@ class TextOverlay:
                 return int(round((block_w - widths[i]) / 2))
             else:
                 return int(round(block_w - widths[i]))
+
+        def _positioned_segments(line_segments, x_start):
+            positioned = []
+            nonempty = [seg for seg in line_segments if seg.get("text")]
+            xx = x_start
+            for idx, seg in enumerate(nonempty):
+                seg_w = self._measure_text_advance(draw, seg["text"], seg["font"], letter_spacing)
+                positioned.append((seg, xx, seg_w))
+                xx += seg_w
+                if idx < len(nonempty) - 1:
+                    xx += letter_spacing
+            return positioned
+
+        def _draw_segment_chars(draw_ctx, seg, start_x, baseline_y, color_rgba, stroke_rgba=None, stroke_width=0, dx_extra=0, dy_extra=0):
+            text_value = seg.get("text", "")
+            if not text_value:
+                return
+
+            xx = start_x
+            for ch_idx, ch in enumerate(text_value):
+                kwargs = {"font": seg["font"]}
+                if stroke_rgba is not None and stroke_width > 0:
+                    kwargs["stroke_width"] = stroke_width
+                    kwargs["stroke_fill"] = stroke_rgba
+
+                draw_ctx.text((xx + dx_extra, baseline_y + dy_extra), ch, fill=color_rgba, **kwargs)
+
+                char_w = draw.textlength(ch, font=seg["font"])
+                if ch_idx < len(text_value) - 1:
+                    xx += char_w + letter_spacing
+                else:
+                    xx += char_w
 
         # Background (animated alpha)
         if bg_enable and block_w > 0 and block_h > 0:
@@ -312,6 +619,39 @@ class TextOverlay:
                 od.rectangle(rect, fill=(br, bgc, bb, ba))
             image = Image.alpha_composite(image, overlay)
 
+        inline_bg_overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        inline_bg_draw = ImageDraw.Draw(inline_bg_overlay, "RGBA")
+
+        inline_bg_alpha = int(max(0.0, min(1.0, float(bg_alpha) * opacity_scale)) * 255)
+        inline_bg_pad_x = max(1, int(round(font_size * 0.10)))
+        inline_bg_pad_y = max(1, int(round(font_size * 0.06)))
+        inline_bg_radius = max(0, int(round(min(bg_radius, font_size * 0.25))))
+
+        yy_top = visual_top_y
+        for i, line in enumerate(lines):
+            baseline_y = yy_top - tops[i]
+            x_line = x0 + _line_offset(i)
+            positioned = _positioned_segments(line, x_line)
+            for seg, seg_x, _seg_w in positioned:
+                bg_hex = seg["style"].get("bg")
+                if not bg_hex:
+                    continue
+                br, bgc, bb = self.hex_to_rgb(bg_hex, fallback=self.hex_to_rgb(bg_color_hex))
+                bbox = draw.textbbox((seg_x, baseline_y), seg["text"], font=seg["font"], stroke_width=sw)
+                rect = [
+                    bbox[0] - inline_bg_pad_x,
+                    bbox[1] - inline_bg_pad_y,
+                    bbox[2] + inline_bg_pad_x,
+                    bbox[3] + inline_bg_pad_y,
+                ]
+                try:
+                    inline_bg_draw.rounded_rectangle(rect, radius=inline_bg_radius, fill=(br, bgc, bb, inline_bg_alpha))
+                except Exception:
+                    inline_bg_draw.rectangle(rect, fill=(br, bgc, bb, inline_bg_alpha))
+            yy_top += int(round(heights[i] + line_spacing))
+
+        image = Image.alpha_composite(image, inline_bg_overlay)
+
         # Shadow (animated alpha)
         if shadow_enable and block_w > 0 and block_h > 0:
             sh_r, sh_g, sh_b = self.hex_to_rgb(shadow_color_hex)
@@ -320,14 +660,21 @@ class TextOverlay:
             overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
             od = ImageDraw.Draw(overlay, "RGBA")
 
-            yy = first_line_baseline_y
-            for i, (ln, h) in enumerate(zip(lines, heights)):
-                xx = x_draw + _line_offset(i)
-                for ch in ln:
-                    od.text((xx + sdx, yy + sdy), ch, font=loaded_font,
-                            fill=(sh_r, sh_g, sh_b, sh_a))
-                    xx += draw.textlength(ch, font=loaded_font) + letter_spacing
-                yy += int(round(h + line_spacing))
+            yy_top = visual_top_y
+            for i, line in enumerate(lines):
+                baseline_y = yy_top - tops[i]
+                x_line = x0 + _line_offset(i)
+                for seg, seg_x, _seg_w in _positioned_segments(line, x_line):
+                    _draw_segment_chars(
+                        od,
+                        seg,
+                        seg_x,
+                        baseline_y,
+                        (sh_r, sh_g, sh_b, sh_a),
+                        dx_extra=sdx,
+                        dy_extra=sdy,
+                    )
+                yy_top += int(round(heights[i] + line_spacing))
 
             image = Image.alpha_composite(image, overlay)
 
@@ -340,18 +687,35 @@ class TextOverlay:
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay, "RGBA")
 
-        yy = first_line_baseline_y
-        for i, (ln, h) in enumerate(zip(lines, heights)):
-            xx = x_draw + _line_offset(i)
-            for ch in ln:
+        yy_top = visual_top_y
+        for i, line in enumerate(lines):
+            baseline_y = yy_top - tops[i]
+            x_line = x0 + _line_offset(i)
+
+            for seg, seg_x, _seg_w in _positioned_segments(line, x_line):
+                seg_r, seg_g, seg_b = self.hex_to_rgb(seg["style"].get("fill"), fallback=(fr, fg, fb))
+
                 if sw > 0 and sa > 0:
-                    od.text((xx, yy), ch, font=loaded_font,
-                            fill=(sr, sg, sb, sa),
-                            stroke_width=sw, stroke_fill=(sr, sg, sb, sa))
+                    _draw_segment_chars(
+                        od,
+                        seg,
+                        seg_x,
+                        baseline_y,
+                        (seg_r, seg_g, seg_b, sa),
+                        stroke_rgba=(sr, sg, sb, sa),
+                        stroke_width=sw,
+                    )
+
                 if fa > 0:
-                    od.text((xx, yy), ch, font=loaded_font, fill=(fr, fg, fb, fa))
-                xx += draw.textlength(ch, font=loaded_font) + letter_spacing
-            yy += int(round(h + line_spacing))
+                    _draw_segment_chars(
+                        od,
+                        seg,
+                        seg_x,
+                        baseline_y,
+                        (seg_r, seg_g, seg_b, fa),
+                    )
+
+            yy_top += int(round(heights[i] + line_spacing))
 
         image = Image.alpha_composite(image, overlay)
 

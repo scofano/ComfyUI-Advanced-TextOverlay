@@ -11,6 +11,7 @@ This module provides the **most feature‑rich and precise text overlay system a
 * Completely re‑engineered layout engine
 * Pixel‑perfect multiline stroke alignment
 * Opacity‑aware backgrounds and shadows
+* Inline rich text with HTML-like tags for bold, italic, per-segment text color, and per-segment highlight backgrounds
 * Letter/line spacing, padding, and alignment controls
 * Full animation engine (fade + directional movement)
 * Batch-aware rendering with smart caching
@@ -44,8 +45,92 @@ This module provides the **most feature‑rich and precise text overlay system a
 * Stroke + alpha
 * Shadow + alpha + offset
 * Rounded background box with padding, color, radius, and alpha
+* Inline rich text styling with HTML-like tags
 
-### ✔️ 4. Animation System
+### ✔️ 4. Inline Rich Text
+
+The `text` field now supports a small HTML-like subset for styling parts of the text independently.
+
+Supported tags:
+
+* `<b>bold</b>`
+* `<i>italic</i>`
+* `<br>` for line breaks
+* `<span color="#FF0000">red text</span>`
+* `<span bg="#000000">highlighted text</span>`
+* `<span style="color:#00FF00; background-color:#222222">combined styling</span>`
+
+Supported attributes on `<span>`:
+
+| Attribute | Purpose |
+| --------- | ------- |
+| `color`   | Per-segment text color |
+| `fill`    | Alias for text color |
+| `fg`      | Alias for text color |
+| `bg`      | Per-segment highlight/background color |
+| `background` | Alias for background color |
+| `background-color` | Alias for background color |
+| `style`   | Inline CSS-like support for `color` and `background-color` |
+
+Examples:
+
+```html
+Hello <b>bold</b> and <i>italic</i><br>
+<span color="#ff0000">red</span> and <span color="#00aaff" bg="#111111">blue on dark background</span>
+```
+
+Notes:
+
+* This is **not full HTML/CSS rendering** — it is a safe, limited inline styling system.
+* Plain text still works exactly as before.
+* Bold and italic use best-effort font variant matching. If the selected font has no matching variant, the regular font is used.
+* Inline background highlights use the node's `bg_alpha` / `bg_radius` settings for opacity and rounding.
+* Invalid inline colors fall back to the node's normal `fill_color_hex` or `bg_color_hex` values.
+* Unsupported HTML tags are ignored for styling; their text content still renders.
+
+### ✔️ 5. Rich Text Examples
+
+#### Mixed emphasis
+
+```html
+This is <b>bold</b>, <i>italic</i>, and <b><i>both</i></b>.
+```
+
+#### Multi-color text
+
+```html
+<span color="#ff5555">Red</span>
+<span color="#55ff55">Green</span>
+<span color="#5599ff">Blue</span>
+```
+
+#### Highlighted words only
+
+```html
+Normal text with <span bg="#6b1d1d">highlighted words</span> in the middle.
+```
+
+#### Combined color + highlight + emphasis
+
+```html
+<span color="#ffffff" bg="#004488"><b>Important label</b></span>
+```
+
+#### Using inline style
+
+```html
+<span style="color:#ffd700; background-color:#202020">Styled with inline attributes</span>
+```
+
+#### Multiline rich text
+
+```html
+Title: <b>Episode 01</b><br>
+<span color="#cccccc">Subtitle line</span><br>
+<span color="#ffffff" bg="#7a0018">Now Playing</span>
+```
+
+### ✔️ 6. Animation System
 
 Supports:
 
@@ -69,13 +154,13 @@ Animation Parameters:
 * `animation_opacity_target`
 * `pause_frames_before_start`
 
-### ✔️ 5. Batch-Smart Processing
+### ✔️ 7. Batch-Smart Processing
 
 * Automatically caches layout on first frame
 * Maintains perfect consistency across all frames
 * For animated batches: animates through first *N* frames, then holds the final pose
 
-### ✔️ 6. Full Video Support
+### ✔️ 8. Full Video Support
 
 The **Advanced Text Overlay – Video** node:
 
@@ -143,6 +228,19 @@ This provides a consistent font selection experience across all your nodes.
 
 Connect an image or batch → configure text parameters → render.
 
+You can enter either plain text:
+
+```text
+Hello world
+Second line
+```
+
+or rich text:
+
+```html
+Hello <b>world</b><br><span color="#00d0ff">Second line</span>
+```
+
 ### **Video Node: `Advanced Text Overlay – Video`**
 
 Provide a path to a video → configure overlay → output is written to ComfyUI's output directory.
@@ -155,12 +253,49 @@ Provide a path to a video → configure overlay → output is written to ComfyUI
 
 | Parameter        | Description                               |
 | ---------------- | ----------------------------------------- |
-| `text`           | Text to draw; supports multiline `\n`     |
+| `text`           | Text to draw; supports multiline `\n` and inline HTML-like tags such as `<b>`, `<i>`, `<br>`, and `<span color/bg>` |
 | `all_caps`       | Force uppercase                           |
 | `font`           | Font name or file; auto-searches `/fonts` |
 | `font_size`      | Pixel size                                |
 | `letter_spacing` | Per-character spacing                     |
 | `line_spacing`   | Spacing between lines                     |
+
+### Rich Text Reference
+
+| Syntax | Result |
+| ------ | ------ |
+| `<b>Text</b>` | Bold text when a matching font variant is available |
+| `<i>Text</i>` | Italic text when a matching font variant is available |
+| `<br>` | Line break |
+| `<span color="#RRGGBB">Text</span>` | Changes text color for that segment |
+| `<span bg="#RRGGBB">Text</span>` | Draws a background highlight behind that segment |
+| `<span style="color:#fff; background-color:#000">Text</span>` | Combined inline styling |
+
+### Rich Text Examples
+
+```html
+Normal <b>bold</b> <i>italic</i>
+```
+
+```html
+<span color="#FFD700">Gold</span> <span color="#00FFFF">Cyan</span>
+```
+
+```html
+<span bg="#8B0000">Red highlight</span> and <span color="#FFFFFF" bg="#004488">white on blue</span>
+```
+
+```html
+<span color="#FFD700"><b>Golden title</b></span><br>
+<span style="color:#ffffff; background-color:#333333">subtitle</span>
+```
+
+### Rich Text Limitations
+
+* This is **not** a full browser engine and does not support general HTML layout or arbitrary CSS.
+* Supported styling is intentionally limited to inline emphasis, line breaks, text color, and segment background color.
+* Per-segment backgrounds wrap naturally with the text layout; if text wraps, the highlight is drawn for each wrapped fragment.
+* Whole-block background settings (`bg_enable`, `bg_padding`, `bg_color_hex`, etc.) still apply independently from inline segment highlights.
 
 ### Color & Stroke
 
