@@ -1,14 +1,27 @@
-# pyproject.toml
 [project]
-name = "advanced-textoverlay"  # Unique and immutable node identifier.
+name = "advanced-textoverlay"
 description = "Advanced Text Overlay Node for ComfyUI featuring rebuilt rendering logic, precise alignment, custom fonts, and extended styling controls."
-version = "1.4.0"  # Semantic versioning
-dependencies = []  # Populated from requirements.txt if present.
+version = "1.4.0"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "torch",
+    "Pillow",
+    "imageio",
+    "tqdm",
+]
+classifiers = [
+    "Operating System :: OS Independent",
+]
 
 [project.urls]
 Repository = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay"
+Documentation = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay#readme"
+Issues = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay/issues"
 
 [tool.comfy]
 PublisherId = "dansco"
 DisplayName = "Advanced Text Overlay"
-Icon = "https://raw.githubusercontent.com/scofano/ComfyUI-Advanced-TextOverlay/refs/heads/main/ato-icon.jpg"
+Icon = "https://raw.githubusercontent.com/scofano/ComfyUI-Advanced-TextOverlay/main/ato-icon.jpg"
