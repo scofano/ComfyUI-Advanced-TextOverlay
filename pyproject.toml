@@ -11,3 +11,4 @@ Repository = "https://github.com/scofano/ComfyUI-Advanced-TextOverlay"
 [tool.comfy]
 PublisherId = "dansco"
 DisplayName = "Advanced Text Overlay"
+Icon = "https://raw.githubusercontent.com/scofano/ComfyUI-Advanced-TextOverlay/refs/heads/main/ato-icon.jpg"
