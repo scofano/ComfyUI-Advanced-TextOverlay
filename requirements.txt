@@ -3,3 +3,4 @@ torch
 Pillow
 imageio
 tqdm
+fonttools

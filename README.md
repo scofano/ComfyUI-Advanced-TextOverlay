@@ -198,24 +198,35 @@ Clone the repository inside your ComfyUI `custom_nodes` directory:
 git clone https://github.com/scofano/ComfyUI-Advanced-TextOverlay
 ```
 
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
 Restart ComfyUI — the nodes will appear under **Advanced Text Overlay**.
 
-## 🎨 Font Selection
+## 🎨 Font Selection & Name Resolution
 
-The node now includes a dropdown menu that automatically populates with fonts installed on your system:
+The node includes a robust font management system that automatically populates with fonts installed on your system:
 
 - **Windows**: Scans `C:\Windows\Fonts\`
 - **macOS**: Scans `/System/Library/Fonts/`, `/Library/Fonts/`, and `~/Library/Fonts/`
 - **Linux**: Scans `/usr/share/fonts/`, `/usr/local/share/fonts/`, `~/.fonts/`, and `~/.local/share/fonts/`
 
-If no system fonts are detected, the node falls back to common web-safe fonts like Arial, Times New Roman, etc.
+### True Font Name Resolution
+
+Unlike many other nodes that use the font's filename (e.g., `califb.ttf` → "califb"), this module uses the **True Font Family Name** (e.g., "Californian FB"). 
+
+- **Why this matters**: Rendering engines often fail to find fonts by filename, causing them to fall back to **Arial**. By resolving the internal metadata name, this module ensures your selected font is rendered correctly every time.
+- **Performance Caching**: Scanning hundreds of system fonts can be slow. This module automatically creates a `font_cache.json` file. The first scan takes a few seconds, but subsequent loads are near-instant (<1ms).
 
 ### Using the Font Dropdown
 
-1. Select your desired font from the dropdown menu
-2. The node will automatically resolve the font name to the correct file path
-3. Text will be rendered using the selected font
-4. Works with both the image and video overlay nodes
+1. Select your desired font from the dropdown menu.
+2. The node will automatically resolve the "True Name" to the correct file path.
+3. Text will be rendered using the selected font, avoiding the "Arial fallback" bug.
+4. Works with both the image and video overlay nodes.
 
 ### For Developers
 
@@ -237,6 +248,7 @@ class MyTextNode:
 ```
 
 This provides a consistent font selection experience across all your nodes.
+
 
 ---
 

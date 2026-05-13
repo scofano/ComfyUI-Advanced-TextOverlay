@@ -7,17 +7,72 @@ import os
 import sys
 import glob
 import re
+import json
 from typing import List, Dict, Optional
 from pathlib import Path
 
+try:
+    from fontTools import ttLib
+except ImportError:
+    ttLib = None
+
+CACHE_FILE = Path(__file__).parent / "font_cache.json"
 
 class FontManager:
     """Centralized font discovery and management for ComfyUI nodes."""
     
     def __init__(self):
-        self._font_cache: Optional[List[str]] = None
         self._name_to_path: Dict[str, str] = {}
         self._scanned = False
+        self._load_cache()
+    
+    def _load_cache(self) -> None:
+        """Load font name mapping from JSON cache if it exists."""
+        if CACHE_FILE.exists():
+            try:
+                with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                    self._name_to_path = json.load(f)
+                    if self._name_to_path:
+                        self._scanned = True
+            except Exception as e:
+                print(f"Error loading font cache: {e}")
+
+    def _save_cache(self) -> None:
+        """Save current font mapping to JSON cache."""
+        try:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._name_to_path, f, indent=4)
+        except Exception as e:
+            print(f"Error saving font cache: {e}")
+
+    def _get_font_family_name(self, font_path: str) -> Optional[str]:
+        """Extract the Font Family name using fontTools."""
+        if ttLib is None:
+            return None
+            
+        try:
+            # Use lazy=True to avoid loading the entire font into memory
+            # For .ttc files, we just look at the first font (fontNumber=0)
+            font = ttLib.TTFont(font_path, fontNumber=0, lazy=True)
+            
+            name_record = None
+            if 'name' in font:
+                for record in font['name'].names:
+                    # Name ID 1 = Font Family
+                    if record.nameID == 1:
+                        # Priority: Windows Platform (3) + US English (1033)
+                        if record.platformID == 3 and record.langID == 1033:
+                            name_record = record
+                            break
+                        # Fallback to any English or the first record found
+                        elif record.langID == 1033 or name_record is None:
+                            name_record = record
+            
+            if name_record:
+                return name_record.toUnicode()
+        except Exception:
+            pass
+        return None
     
     def get_available_fonts(self) -> List[str]:
         """
@@ -117,7 +172,7 @@ class FontManager:
     
     def _scan_system_fonts(self) -> None:
         """Platform-specific font discovery."""
-        if self._scanned:
+        if self._scanned and self._name_to_path:
             return
         
         self._name_to_path = {}
@@ -132,6 +187,8 @@ class FontManager:
         # Add some common fallback fonts
         self._add_fallback_fonts()
         
+        # Save results to cache for next time
+        self._save_cache()
         self._scanned = True
     
     def _scan_windows_fonts(self) -> None:
@@ -139,18 +196,7 @@ class FontManager:
         try:
             fonts_dir = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
             if fonts_dir.exists():
-                # Common font file extensions
-                patterns = ["*.ttf", "*.otf", "*.ttc"]
-                
-                for pattern in patterns:
-                    for font_file in fonts_dir.glob(pattern):
-                        try:
-                            # Extract font name from filename (remove extension)
-                            font_name = font_file.stem
-                            # Use the full path as the value
-                            self._name_to_path[font_name] = str(font_file)
-                        except Exception:
-                            continue
+                self._scan_directory(fonts_dir)
         except Exception:
             pass
     
@@ -186,10 +232,17 @@ class FontManager:
         for pattern in patterns:
             for font_file in fonts_dir.glob(f"**/{pattern}"):
                 try:
-                    font_name = font_file.stem
+                    # Try to get the internal font family name
+                    font_path = str(font_file)
+                    font_name = self._get_font_family_name(font_path)
+                    
+                    # Fallback to filename stem if metadata extraction fails
+                    if not font_name:
+                        font_name = font_file.stem
+                        
                     # Only add if we don't already have this name (avoid duplicates)
                     if font_name not in self._name_to_path:
-                        self._name_to_path[font_name] = str(font_file)
+                        self._name_to_path[font_name] = font_path
                 except Exception:
                     continue
     
