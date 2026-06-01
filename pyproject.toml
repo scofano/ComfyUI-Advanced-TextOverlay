@@ -1,7 +1,7 @@
 [project]
 name = "advanced-textoverlay"
 description = "Advanced Text Overlay Node for ComfyUI featuring rebuilt rendering logic, precise alignment, custom fonts, and extended styling controls."
-version = "1.4.0"
+version = "1.5.0"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
