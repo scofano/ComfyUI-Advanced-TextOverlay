@@ -16,11 +16,12 @@ This module provides the **most feature‑rich and precise text overlay system a
 * Full animation engine (fade + directional movement)
 * Batch-aware rendering with smart caching
 * Full video processing node with audio‑preserving re‑mux
-* **NEW: Font dropdown with system font discovery**
+* Font dropdown with system font discovery
   - Automatically detects installed fonts on Windows, macOS, and Linux
   - Cross-platform font scanning
   - Fallback to common font names for compatibility
   - Reusable font system for future nodes
+* **NEW: Instagram Question Box nodes** — render a two-panel sticker overlay (dark header + light body) matching the Instagram "Ask me a question" story format, with full typography, color, shadow, and animation controls
 
 
 ## ✨ Key Features
@@ -187,6 +188,58 @@ The **Advanced Text Overlay – Video** node:
 * Writes a new MP4
 * **Automatically re‑injects the original audio track with ffmpeg**
 * Optional `delete_original` flag
+
+### ✔️ 9. Instagram Question Box
+
+Two dedicated nodes — **`Instagram Question Box`** (image) and **`Instagram Question Box – Video`** — render a two-panel sticker that replicates the Instagram "Ask me a question" story format.
+
+**Layout**
+
+```
+┌──────────────────────────────────┐
+│  Ask me a question  ← header     │  ← header_height px, header_color_hex
+├──────────────────────────────────┤
+│                                  │
+│   Your answer text here          │  ← body_height px, body_color_hex
+│                                  │
+└──────────────────────────────────┘
+```
+
+* All four outer corners are fully rounded (`corner_radius`) with **anti-aliased edges** (4× supersampled rendering)
+* The header/body divider is flat — only the outer corners are rounded
+* Optional soft drop-shadow (`box_shadow_enable`, `box_shadow_blur`, `box_shadow_distance`)
+
+**Typography**
+
+* Separate font, size, letter spacing, and fill color/alpha for **question** (header) and **answer** (body)
+* `answer_line_spacing` controls vertical gap between wrapped lines
+* `answer_padding` sets inner padding on all sides of the body text area
+* Answer text supports the same **HTML-like rich text** as the main overlay nodes (`<b>`, `<i>`, `<br>`, `<span color="…">`, `\n`) — bold/italic load the correct font variant automatically
+
+**Positioning & Animation**
+
+* `box_width`, `header_height`, `body_height` — independent pixel dimensions
+* `horizontal_alignment` / `vertical_alignment` + `x_shift` / `y_shift` for placement
+* Same full animation system as the main nodes (`fade_in`, `move_from_*`, easing, `pause_frames_before_start`)
+
+**Video variant extras**
+
+* `pause_seconds_before_start` (converted to frames using source FPS)
+* Audio preserved via ffmpeg re-mux
+* Optional `delete_original`
+
+**Default values** are tuned for a 1080-wide portrait story:
+
+| Parameter | Default |
+| --------- | ------- |
+| `box_width` | 950 |
+| `header_height` | 90 |
+| `body_height` | 200 |
+| `corner_radius` | 32 |
+| `question_font` | Arial Black |
+| `question_font_size` | 30 |
+| `answer_font_size` | 50 |
+| `box_shadow_blur` | 15 |
 
 ---
 
