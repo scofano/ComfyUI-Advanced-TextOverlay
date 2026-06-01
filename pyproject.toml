@@ -1,6 +1,6 @@
 [project]
 name = "advanced-textoverlay"
-description = "Advanced Text Overlay Node for ComfyUI featuring rebuilt rendering logic, precise alignment, custom fonts, and extended styling controls."
+description = "4 nodes: Advanced Text Overlay (image + video) with rich HTML text, animations, and full typography controls; Instagram Question Box (image + video) with two-panel sticker layout, anti-aliased corners, independent header/body heights, and soft drop-shadow."
 version = "1.5.0"
 readme = "README.md"
 requires-python = ">=3.9"
