@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import tempfile
 import numpy as np
 import torch
 from html.parser import HTMLParser
@@ -1501,6 +1502,7 @@ class IGQuestionBox:
         opacity_scale=1.0,
         dx=0,
         dy=0,
+        keep_alpha=False,
     ):
         from PIL import ImageFilter
 
@@ -1662,7 +1664,7 @@ class IGQuestionBox:
                     text_y += line_h + line_gap
 
         image = Image.alpha_composite(image, overlay)
-        return image.convert("RGB")
+        return image if keep_alpha else image.convert("RGB")
 
     # ── ComfyUI entrypoint ───────────────────────────────────────────────────
 
@@ -1807,6 +1809,7 @@ class IGQuestionBoxVideo:
             "delete_original":  ("BOOLEAN", {"default": False}),
         }
         required.update(base)
+        required["encoder"] = (["nvenc", "cpu"], {"default": "nvenc"})
         return {"required": required}
 
     RETURN_TYPES  = ("STRING",)
@@ -1876,6 +1879,7 @@ class IGQuestionBoxVideo:
         animation_ease,
         animation_opacity_target,
         pause_seconds_before_start,
+        encoder="nvenc",
     ):
         if not video_path or not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -1883,99 +1887,81 @@ class IGQuestionBoxVideo:
         out_dir  = self._get_output_dir()
         out_path = self._make_unique_path(out_dir, filename_prefix, video_path)
 
-        box_node = IGQuestionBox()
-
         reader = imageio.get_reader(video_path)
         meta   = reader.get_meta_data()
-        fps    = meta.get("fps", 30)
+        reader.close()
+        fps    = float(meta.get("fps", 30))
+        width, height = meta["size"]
 
-        try:
-            pause_frames = max(0, int(round(float(pause_seconds_before_start) * float(fps))))
-        except Exception:
-            pause_frames = max(0, int(pause_seconds_before_start))
-
-        nframes_meta = meta.get("nframes", None)
-        duration     = meta.get("duration", None)
-        total_frames = None
-        if isinstance(nframes_meta, (int, float)) and 0 < nframes_meta < 1e8:
-            total_frames = int(nframes_meta)
-        elif isinstance(duration, (int, float)) and duration > 0 and fps > 0:
-            total_frames = int(duration * fps)
-
-        comfy_pbar = None
-        if ProgressBar is not None and isinstance(total_frames, int) and total_frames > 0:
-            comfy_pbar = ProgressBar(total_frames)
-
-        if isinstance(total_frames, int) and total_frames > 0:
-            frame_iter = tqdm(reader, total=total_frames, desc="IGQuestionBoxVideo")
-        else:
-            frame_iter = tqdm(reader, desc="IGQuestionBoxVideo")
-
+        pause_frames = max(0, int(round(float(pause_seconds_before_start) * fps)))
         T = max(1, int(animation_frames)) if animate else 1
+        frame_dur = 1.0 / fps
+        box_node = IGQuestionBox()
 
-        writer = imageio.get_writer(out_path, fps=fps, macro_block_size=1)
+        # The box only changes during the entrance animation, so render just those
+        # frames as transparent PNGs; ffmpeg's overlay repeats the last one until the end.
+        with tempfile.TemporaryDirectory(prefix="igq_") as tmp:
+            entries = []
+            if pause_frames > 0:
+                blank = os.path.join(tmp, "blank.png")
+                Image.new("RGBA", (width, height), (0, 0, 0, 0)).save(blank)
+                entries.append((blank, pause_frames * frame_dur))
 
-        try:
-            for i, frame in enumerate(frame_iter):
-                pil_img = Image.fromarray(frame)
-
-                if i < pause_frames:
-                    out_img = pil_img
+            for t in range(T):
+                if animate:
+                    p      = animations.progress(t, max(1, T - 1), animation_ease)
+                    op     = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
+                    dx, dy = animations.compute_offsets(animation_kind, p, width, height)
                 else:
-                    if animate:
-                        eff_t  = min(i - pause_frames, T - 1)
-                        p      = animations.progress(eff_t, max(1, T - 1), animation_ease)
-                        op     = animations.compute_opacity(animation_kind, p, float(animation_opacity_target))
-                        dx, dy = animations.compute_offsets(animation_kind, p, pil_img.width, pil_img.height)
-                    else:
-                        op, dx, dy = 1.0, 0, 0
+                    op, dx, dy = 1.0, 0, 0
 
-                    out_img = box_node.draw_question_box(
-                        pil_img,
-                        question_text, answer_text,
-                        question_font, question_font_size, question_letter_spacing,
-                        question_fill_color_hex, question_fill_alpha,
-                        answer_font, answer_font_size, answer_letter_spacing, answer_line_spacing,
-                        answer_fill_color_hex, answer_fill_alpha,
-                        box_width, header_height, body_height, answer_padding,
-                        header_color_hex, header_alpha,
-                        body_color_hex, body_alpha,
-                        corner_radius,
-                        box_shadow_enable, box_shadow_color_hex,
-                        box_shadow_alpha, box_shadow_distance, box_shadow_blur,
-                        horizontal_alignment, vertical_alignment,
-                        x_shift, y_shift,
-                        opacity_scale=op, dx=dx, dy=dy,
-                    )
+                layer = box_node.draw_question_box(
+                    Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+                    question_text, answer_text,
+                    question_font, question_font_size, question_letter_spacing,
+                    question_fill_color_hex, question_fill_alpha,
+                    answer_font, answer_font_size, answer_letter_spacing, answer_line_spacing,
+                    answer_fill_color_hex, answer_fill_alpha,
+                    box_width, header_height, body_height, answer_padding,
+                    header_color_hex, header_alpha,
+                    body_color_hex, body_alpha,
+                    corner_radius,
+                    box_shadow_enable, box_shadow_color_hex,
+                    box_shadow_alpha, box_shadow_distance, box_shadow_blur,
+                    horizontal_alignment, vertical_alignment,
+                    x_shift, y_shift,
+                    opacity_scale=op, dx=dx, dy=dy, keep_alpha=True,
+                )
+                png = os.path.join(tmp, f"f{t:05d}.png")
+                layer.save(png)
+                entries.append((png, frame_dur))
 
-                writer.append_data(np.array(out_img))
-                if comfy_pbar is not None:
-                    comfy_pbar.update(1)
+            list_path = os.path.join(tmp, "overlay.txt")
+            with open(list_path, "w", encoding="utf-8") as f:
+                for png, dur in entries:
+                    f.write(f"file '{png.replace(os.sep, '/')}'\nduration {dur:.6f}\n")
 
-        finally:
-            writer.close()
-            reader.close()
+            def run_ffmpeg(vcodec):
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-f", "concat", "-safe", "0", "-i", list_path,
+                    "-filter_complex", "[0:v][1:v]overlay=format=auto:eof_action=repeat,format=yuv420p[v]",
+                    "-map", "[v]", "-map", "0:a?",
+                    *vcodec,
+                    "-c:a", "copy",
+                    out_path,
+                ]
+                return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
-        # Mux original audio back
-        try:
-            tmp_out = out_path + ".tmp_audio.mp4"
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", out_path,
-                "-i", video_path,
-                "-c", "copy",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                tmp_out,
-            ]
-            completed = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-            if completed.returncode == 0:
-                os.replace(tmp_out, out_path)
-            else:
-                print("[IGQuestionBoxVideo] ffmpeg failed to mux audio, keeping silent video.")
-                print(completed.stderr.decode("utf-8", errors="ignore"))
-        except Exception as e:
-            print(f"[IGQuestionBoxVideo] Could not mux audio: {e}")
+            cpu = ["-c:v", "libx264", "-crf", "18", "-preset", "veryfast"]
+            nvenc = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-b:v", "0"]
+            completed = run_ffmpeg(nvenc if encoder == "nvenc" else cpu)
+            if completed.returncode != 0 and encoder == "nvenc":
+                print("[IGQuestionBoxVideo] NVENC failed, falling back to CPU encoder.")
+                completed = run_ffmpeg(cpu)
+            if completed.returncode != 0:
+                raise RuntimeError(completed.stderr.decode("utf-8", errors="ignore")[-2000:])
 
         if delete_original:
             try:
